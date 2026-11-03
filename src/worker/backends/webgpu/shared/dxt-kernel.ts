@@ -23,8 +23,8 @@ const MAX_MEMORY = 64 * 1024 * 1024;
 /** Below this the staging copies outweigh anything the kernel can win back. */
 const MIN_PIXELS = 256;
 
-export const DXT_KERNEL_URL = "/dxt-kernel.wasm";
-export const DXT_KERNEL_SIMD_URL = "/dxt-kernel-simd.wasm";
+export const DXT_KERNEL_URL = import.meta.env.BASE_URL + "dxt-kernel.wasm";
+export const DXT_KERNEL_SIMD_URL = import.meta.env.BASE_URL + "dxt-kernel-simd.wasm";
 
 export type KernelVariant = "scalar" | "simd" | "provided";
 

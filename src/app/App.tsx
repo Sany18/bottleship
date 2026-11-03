@@ -33,6 +33,7 @@ import ManifestEditorModal from "../wizard/ManifestEditorModal";
 import { listAddedGames, removeAddedGame, type AddedGame } from "../wgb-library";
 import { ensurePersistentStorageRequested } from "../storage-manager";
 import { loadGamesCatalog } from "../games-catalog";
+import { installEmbedSaves, setEmbedGameId } from "../embed-saves";
 import { browserPolicyBlock, loadDeploymentConfig } from "../deployment-config";
 import { DEFAULT_QUALITY, mergeQuality, parseStoredQuality, serializeStoredQuality } from "../worker/core/quality-config";
 import type { QualityConfig } from "../worker/core/quality-config";
@@ -244,6 +245,10 @@ function loadPhaseStatus(phase: string, gameName: string): string {
 }
 
 
+/** Embedded in a host page (AlterSpace hub): the host draws the loading/exit screens and receives the state. */
+const EMBED = typeof window !== "undefined" && window.parent !== window;
+if (EMBED) installEmbedSaves();
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -285,6 +290,25 @@ export default function App() {
   // snapshot would write `null` back over a ref the message handler has already set.
   const exitInfoRef = useRef<GuestExitInfo | null>(null);
   useEffect(() => { exitInfoRef.current = exitInfo; }, [exitInfo]);
+  useEffect(() => {
+    if (!EMBED) return;
+    window.parent.postMessage({
+      source: "bs-embed",
+      progress: loadingProgress && { phase: loadingProgress.phase, percent: loadingProgress.percent, label: loadingProgress.label, indeterminate: !!loadingProgress.indeterminate, fadingOut: !!loadingProgress.fadingOut },
+      error: errorMessage,
+      exit: exitInfo && {
+        code: exitInfo.code, crashed: !!exitInfo.crashed,
+        // Short human-readable cause for the host's error beacon (why did the guest leave, where, after how long).
+        detail: (() => {
+          const f = exitInfo.fault;
+          const hx = (v: unknown) => (typeof v === "number" ? "0x" + (v >>> 0).toString(16) : String(v ?? "?"));
+          const bt = (f?.backtrace ?? []).slice(0, 3).map((b) => String(b.sym ?? b.ret).replace(/^.*?\+0x/, "+0x").slice(0, 40)).join(" < ");
+          return `${f?.reason || "ExitProcess"} code=${exitInfo.code} eip=${hx(f?.eip)} thunk=${f?.lastThunk || "?"} bt=${bt} t=${Math.round(performance.now() / 1000)}s`;
+        })(),
+      },
+      worker: workerStatus,
+    }, "*");
+  });
   const [isBufferInitialized, setIsBufferInitialized] = useState(false);
   const [isLoadingApp, setIsLoadingApp] = useState(false);
   // Unified launch overlay model, covering the WHOLE journey click → first flip:
@@ -1433,7 +1457,9 @@ export default function App() {
         }
         const name = typeof event.data.name === "string" ? event.data.name.trim() : "";
         if (name) setBundleDisplayName(name);
-        setGameId(typeof event.data.gameId === "string" ? event.data.gameId : null);
+        const nextGid = typeof event.data.gameId === "string" ? event.data.gameId : null;
+        setGameId(nextGid);
+        setEmbedGameId(nextGid);
         setManifestTouch((event.data.touch as ManifestTouch | null) ?? null);
       }
       if (event.data?.type === "loading_progress") {
@@ -3216,7 +3242,7 @@ export default function App() {
       }}
     >
       {/* Top bar */}
-      <header className={s["emu-topbar"]}>
+      <header className={s["emu-topbar"]} style={EMBED ? { display: "none" } : undefined}>
         <button className={cx(s, "emu-topbar-btn", "emu-back-btn")} onClick={() => window.location.assign("/")} title="Back to game selection">
           ← Menu
         </button>
@@ -3344,7 +3370,7 @@ export default function App() {
         {/* The HUD's keyboard action only exists on this screen, so the sheet has to be
             mounted here too — not only in the library return. */}
         <VirtualKeyboardSheet open={oskOpen} onClose={() => setOskOpen(false)} />
-        {loadingProgress && !errorMessage && !exitInfo && (() => {
+        {!EMBED && loadingProgress && !errorMessage && !exitInfo && (() => {
           const activeStage = loadPhaseStageIndex(loadingProgress.phase);
           const status = loadPhaseStatus(loadingProgress.phase, gameDisplayName);
           return (
@@ -3392,15 +3418,15 @@ export default function App() {
         {/* One modal for everything that interrupts: load/worker errors AND guest exit/crash.
             exitInfo (a running process that died) takes precedence over a plain errorMessage. */}
         <ExitOverlay
-          exitInfo={exitInfo}
-          errorMessage={errorMessage}
+          exitInfo={EMBED ? null : exitInfo}
+          errorMessage={EMBED ? null : errorMessage}
           gameName={gameDisplayName}
           onDismissError={() => setErrorMessage(null)}
         />
       </section>
 
       {/* Info strip — catalog games always; destin mode once the WGB manifest name arrives. */}
-      {(displayGame!.id !== "dev" || bundleDisplayName) && (
+      {!EMBED && (displayGame!.id !== "dev" || bundleDisplayName) && (
         <div className={s["emu-info-strip"]}>
           <span className={s["emu-info-name"]}>
             {gameDisplayName}

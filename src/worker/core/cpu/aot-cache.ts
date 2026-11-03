@@ -394,7 +394,7 @@ export class AotCache {
         // codegen loadable into another, and the dangerous case is silent: if the imports still
         // match and only codegen SEMANTICS changed (fastmem layout, relaxed FPU), nothing throws
         // and wrong code gets published. Refusing to save/load is the safe failure.
-        const r = await fetch("/v86.wasm");
+        const r = await fetch(import.meta.env.BASE_URL + "v86.wasm");
         this.engineSha = hex(await crypto.subtle.digest("SHA-256", await r.arrayBuffer()));
         return this.engineSha;
     }

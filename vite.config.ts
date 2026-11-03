@@ -214,6 +214,7 @@ function copyPublicDirExceptApps(): Plugin {
 }
 
 export default defineConfig({
+  base: process.env.BS_BASE ?? "/",
   define: {
     __BUILD_SHA__: JSON.stringify(BUILD_SHA),
     __APP_VERSION__: JSON.stringify(APP_VERSION),

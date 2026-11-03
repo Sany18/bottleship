@@ -2428,7 +2428,7 @@ const initV86 = async (canvas: OffscreenCanvas) => {
   // across cold starts (it is keyed by URL and only fires for the *Streaming entry points —
   // v86's own loader uses the buffer form and therefore always recompiles). Falls back to the
   // buffered path by itself, so this can never be load-bearing for correctness.
-  let wasmPath = import.meta.env?.DEV ? `/v86.wasm?t=${Date.now()}` : "/v86.wasm";
+  let wasmPath = import.meta.env?.DEV ? `${import.meta.env.BASE_URL}v86.wasm?t=${Date.now()}` : import.meta.env.BASE_URL + "v86.wasm";
   const labWasmPath = (globalThis as { __v86LabWasmPath?: string }).__v86LabWasmPath;
   if (import.meta.env?.DEV && labWasmPath !== undefined) {
     if (!/^\/apps\/source-pair-lab\/engines\/[a-f0-9]{64}\.wasm$/.test(labWasmPath)) {
@@ -2443,7 +2443,7 @@ const initV86 = async (canvas: OffscreenCanvas) => {
   // as an explicit failure when they could not be captured.
   const engineLoad: {
     requested: string; path: string; sha256: string | null; bytes: number | null; error: string | null;
-  } = { requested: labWasmPath ?? "/v86.wasm", path: wasmPath, sha256: null, bytes: null, error: null };
+  } = { requested: labWasmPath ?? import.meta.env.BASE_URL + "v86.wasm", path: wasmPath, sha256: null, bytes: null, error: null };
   (globalThis as Record<string, unknown>).__v86EngineLoad = engineLoad;
   void wasmLoader.sourceBytes.then(async (bytes) => {
     if (!bytes) { engineLoad.error = "engine bytes not captured"; return; }
@@ -2464,8 +2464,8 @@ const initV86 = async (canvas: OffscreenCanvas) => {
     wasm_path: wasmPath,
     memory_size: ramSize,
     vga_memory_size: EMU_VGA_MEMORY_SIZE,
-    bios: { url: "/bios/seabios.bin" },
-    vga_bios: { url: "/bios/vgabios.bin" },
+    bios: { url: import.meta.env.BASE_URL + "bios/seabios.bin" },
+    vga_bios: { url: import.meta.env.BASE_URL + "bios/vgabios.bin" },
     autostart: false,
     log_level: 0, // Disable v86 debug logging for performance
   };
@@ -3205,7 +3205,7 @@ const initV86 = async (canvas: OffscreenCanvas) => {
 
       // Dev-mode only: load debug-config.json if present and enabled
       if (import.meta.env.DEV) {
-        fetch('/debug-config.json')
+        fetch(import.meta.env.BASE_URL + "debug-config.json")
           .then(r => r.ok ? r.json() : null)
           .catch(() => null)
           .then((cfg) => {

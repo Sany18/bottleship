@@ -188,6 +188,11 @@ const MULTIBYTE_CODEPAGES = new Set([
     932, 936, 949, 950, 1361, 51932, 51936, 51949, 52936, 54936, 57002, 65000, 65001,
 ]);
 
+/** Does getCodePageDecoder convert this page by its own table, not by the windows-1252 fallback? */
+export function isConvertibleCodePage(codePage: number): boolean {
+    return codePage in CP_TO_LUT || codePage in CP_TO_ENCODING;
+}
+
 /** May a 256-entry byte -> UTF-16 table stand in for getCodePageDecoder on this page? */
 export function isSingleByteCodePage(codePage: number): boolean {
     return !MULTIBYTE_CODEPAGES.has(codePage);

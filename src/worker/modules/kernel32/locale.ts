@@ -6,7 +6,7 @@ import { Logger, LogCategory } from '../../core/logger';
 import { Marshaler } from '../../core/memory/marshaler';
 import { Mem } from '../../core/memory/mem-accessor';
 import { System } from '../../core/system';
-import { EmulatorConfig, getCodePageDecoder, encodeAnsiString, isSingleByteCodePage } from '../../core/emulator-config-manager';
+import { EmulatorConfig, getCodePageDecoder, encodeAnsiString, isConvertibleCodePage, isSingleByteCodePage } from '../../core/emulator-config-manager';
 import { encodeAnsi } from '../codepage-utils';
 import { asBufferSource } from '../../../dom-buffer';
 import { borrowGuestMemory } from '../../core/memory/guest-memory';
@@ -186,9 +186,9 @@ export const exports: Record<string, ThunkImplementation> = {
     },
 
     'IsValidCodePage': (ctx, mem, args) => {
-        const cp = args[0];
-        // 1252, 437, 65001 (UTF-8) are valid
-        return (cp === 1252 || cp === 437 || cp === 65001) ? 1 : 0;
+        // Every page MultiByteToWideChar really converts. The CRT's setlocale("") checks the
+        // locale's ANSI page here, and a refusal leaves it in the "C" locale: no letters above 0x7F.
+        return isConvertibleCodePage(args[0]! >>> 0) ? 1 : 0;
     },
 
     // The default pseudo-LCIDs are not locales; anything else is valid when it names one,

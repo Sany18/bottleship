@@ -22,7 +22,7 @@ let cached: DeploymentConfig | null = null;
 export async function loadDeploymentConfig(): Promise<DeploymentConfig> {
     if (cached) return cached;
     try {
-        const resp = await fetch("/deployment.json");
+        const resp = await fetch(import.meta.env.BASE_URL + "deployment.json");
         cached = resp.ok ? await resp.json() : {};
     } catch {
         cached = {};

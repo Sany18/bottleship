@@ -83,7 +83,7 @@ export async function buildInstallerOnDisk(source: BuildSource, db: GogOverrides
     const setup = source.blobs?.find((f) => /\.exe$/i.test(f.name)) ?? source.blob;
     if (!setup) throw new Error("Drop the setup.exe together with every setup-*.bin part");
     const input = blobRandomAccess(setup);
-    const wasmResponse = await fetch("/unpack-streaming.wasm");
+    const wasmResponse = await fetch(import.meta.env.BASE_URL + "unpack-streaming.wasm");
     if (!wasmResponse.ok) throw new Error(`Decoder download failed: HTTP ${wasmResponse.status}`);
     const decoder = new UnpackDecoder();
     await decoder.init(await wasmResponse.arrayBuffer());

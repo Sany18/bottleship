@@ -2,7 +2,10 @@
 // HEAP_HIGH (see MEM_HEAP_HIGH_BASE), which is what lets a 32-bit title with a real
 // 400MB+ working set live inside a 512MB HEAP bucket. WASM memory is committed, not
 // resident, so the surplus costs commit charge and not RSS until the guest touches it.
-export const EMU_MEMORY_SIZE = 1536 * 1024 * 1024; // 1.5 GB
+// Per-game build (Sid Meier's Pirates!): 2 GB. The game maps its 808 MB of Pak*.FPK with
+// MapViewOfFile and every view is a heap copy, so 512 MB of HEAP_HIGH runs out at sea.
+// The manifest's memory.ram cannot raise this — v86 is initialized before the bundle loads.
+export const EMU_MEMORY_SIZE = 2048 * 1024 * 1024; // 2 GB
 export const EMU_VGA_MEMORY_SIZE = 8 * 1024 * 1024;
 // Largest single allocation the guest heap will accept. Purely a corrupted/garbage-size
 // guard — the real ceiling is the bucket's free space (an oversize request fails there →
