@@ -195,6 +195,40 @@ function binkSurfaceFromFlags(flags: number): BinkSurface | -1 {
     return BINK_SURFACE_BPP[surf] > 0 ? surf : -1;
 }
 
+/**
+ * Deduce BINKSURFACE format constant from a surface pixel format description.
+ * Constants match RAD Game Tools binkw32.dll:
+ *   0 = BINKSURFACEP8, 1 = BINKSURFACE24, 2 = BINKSURFACE24R,
+ *   3 = BINKSURFACE32, 4 = BINKSURFACE32R, 5 = BINKSURFACE32A, 6 = BINKSURFACE32RA,
+ *   7 = BINKSURFACE4444, 8 = BINKSURFACE5551, 9 = BINKSURFACE555, 10 = BINKSURFACE565,
+ *   11 = BINKSURFACE655, 12 = BINKSURFACE664.
+ */
+export function binkSurfaceFromFormat(format: { bpp: number; rMask?: number; gMask?: number; bMask?: number; aMask?: number }): BinkSurface {
+    const { bpp, rMask = 0, gMask = 0, bMask = 0, aMask = 0 } = format;
+    if (bpp === 16) {
+        if (rMask === 0xF800 && gMask === 0x07E0 && bMask === 0x001F) return BinkSurface.RGB565;
+        if (aMask === 0x8000 && rMask === 0x7C00 && gMask === 0x03E0 && bMask === 0x001F) return BinkSurface.ARGB1555;
+        if (rMask === 0x7C00 && gMask === 0x03E0 && bMask === 0x001F) return BinkSurface.XRGB1555;
+        if (rMask === 0xFC00 && gMask === 0x03E0 && bMask === 0x001F) return BinkSurface.RGB655;
+        if (rMask === 0xFC00 && gMask === 0x03F0 && bMask === 0x000F) return BinkSurface.RGB664;
+        if (aMask === 0xF000 && rMask === 0x0F00 && gMask === 0x00F0 && bMask === 0x000F) return BinkSurface.ARGB4444;
+        return BinkSurface.RGB565;
+    }
+    if (bpp === 24) {
+        return rMask === 0xFF0000 ? BinkSurface.BGR24 : BinkSurface.RGB24;
+    }
+    if (bpp === 32) {
+        if (aMask) {
+            return rMask === 0xFF0000 ? BinkSurface.BGRA32A : BinkSurface.RGBA32A;
+        }
+        return rMask === 0xFF0000 ? BinkSurface.BGRA32 : BinkSurface.RGBA32;
+    }
+    if (bpp === 8) {
+        return BinkSurface.P8;
+    }
+    return BinkSurface.RGB565;
+}
+
 /** The BINKSURFACE type the legacy bytes-per-pixel heuristic stands for. */
 function binkSurfaceFromBpp(bpp: number): BinkSurface {
     switch (bpp) {
@@ -221,6 +255,8 @@ function detectDestBpp(pitch: number, destRowPixels: number): number {
 function inferDestRowPixels(pitch: number, storedBpp: number, surface: BitmapTextureSurface | null): number {
     if (surface?.width) return surface.width;
     if (storedBpp > 0 && pitch > 0 && pitch % storedBpp === 0) return pitch / storedBpp;
+    const ddraw = System.getInstance().ddrawContext;
+    if (ddraw?.display?.width) return ddraw.display.width;
     if (pitch > 0) {
         for (const bpp of [4, 3, 2, 1]) {
             if (pitch % bpp === 0) {
@@ -588,11 +624,19 @@ export class BinkW32 implements IModule {
             : binkSurfaceFromBpp(storedBpp || detectDestBpp(pitch, destRowPixels || s.width));
         const destBpp = binkSurfaceBpp(surf);
         const maxWidth = destRowPixels > 0 ? Math.max(0, destRowPixels - destX) : s.width;
-        const maxHeight = destSurface
-            ? Math.max(0, destSurface.height - destY)
-            : Math.max(0, destH - destY);
+        let destBufferHeight = 0;
+        if (destSurface?.height) {
+            destBufferHeight = destSurface.height;
+        } else if (System.getInstance().ddrawContext?.display?.height) {
+            destBufferHeight = System.getInstance().ddrawContext!.display.height;
+        } else if (destH > s.height) {
+            destBufferHeight = destH;
+        }
+        const maxHeight = destBufferHeight > 0
+            ? Math.max(0, destBufferHeight - destY)
+            : s.height;
         const copyWidth = Math.min(s.width, maxWidth);
-        const rows = Math.min(s.height, destH - destY, maxHeight);
+        const rows = Math.min(s.height, maxHeight);
         return { surf, destBpp, copyWidth, rows, destSurface };
     }
 
@@ -1699,12 +1743,22 @@ export class BinkW32 implements IModule {
             if (!s || s.engineHandle < 0 || !destPtr) return 0;
             this._logApi(bink, "CopyToBufferRect", `dest=0x${destPtr.toString(16)} pitch=${pitch}`);
 
-            const clipH = Math.min(srcH2, destH - destY, s.height - srcT);
-            const clipW = Math.min(srcW, s.width - srcL);
-            if (clipH <= 0 || clipW <= 0) return 0;
-
             const declared = binkSurfaceFromFlags(rawFlags);
             const destSurface = this.resolveBitmapTextureTarget(destPtr);
+            let destBufferHeight = 0;
+            if (destSurface?.height) {
+                destBufferHeight = destSurface.height;
+            } else if (System.getInstance().ddrawContext?.display?.height) {
+                destBufferHeight = System.getInstance().ddrawContext!.display.height;
+            } else if (destH > s.height) {
+                destBufferHeight = destH;
+            }
+            const maxHeight = destBufferHeight > 0
+                ? Math.max(0, destBufferHeight - destY)
+                : srcH2;
+            const clipH = Math.min(srcH2, maxHeight, s.height - srcT);
+            const clipW = Math.min(srcW, s.width - srcL);
+            if (clipH <= 0 || clipW <= 0) return 0;
             // The heuristic needs the DESTINATION row width; clipW is the source rect's.
             const surf = declared !== -1
                 ? declared
@@ -1959,48 +2013,49 @@ export class BinkW32 implements IModule {
             return 1;
         };
 
-        // в”Ђв”Ђ BinkDDSurfaceType(IDirectDrawSurface*) → Bink surface type в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-        // The return value's meaning depends on the Bink SDK version the game was
-        // built with (constants differ!).  We don't know which version, so we
-        // return 0 (the game stores and passes it back to BinkCopyToBuffer).
-        // The REAL work: store the surface bpp so BinkCopyToBuffer can use it
-        // for format conversion, independent of the opaque constant.
+        // ── BinkDDSurfaceType(IDirectDrawSurface*) → Bink surface type ──────
+        // The game calls this with a DirectDraw surface pointer to obtain the
+        // BINKSURFACE* format constant, which it passes back to BinkCopyToBuffer.
         this.exports["_BinkDDSurfaceType@4"] = (_ctx, _mem, args) => {
             const surfAddr = args[0];
             const sys = System.getInstance();
 
             const d3d8Surface = resolveD3D8TextureSurface(surfAddr);
             if (d3d8Surface) {
+                const surfType = binkSurfaceFromFormat(d3d8Surface.format);
                 this.lastSurfaceBpp = Math.ceil(d3d8Surface.format.bpp / 8);
-                console.log(`[BINK] BinkDDSurfaceType(0x${surfAddr.toString(16)}): ` +
-                    `D3D8 ${d3d8Surface.width}x${d3d8Surface.height} bpp=${d3d8Surface.format.bpp} → destBpp=${this.lastSurfaceBpp}`);
-                return 0;
+                Logger.log(LogCategory.SYSTEM, `[BINK] BinkDDSurfaceType(0x${surfAddr.toString(16)}): ` +
+                    `D3D8 ${d3d8Surface.width}x${d3d8Surface.height} bpp=${d3d8Surface.format.bpp} → ${surfType} (destBpp=${this.lastSurfaceBpp})`);
+                return surfType;
             }
 
-            // Try to look up the DDraw surface COM object for its bpp
+            // Try to look up the DDraw surface COM object for its bpp and format
             const comObj = sys.resourceProvider.getComObjectByAddressFast(surfAddr);
             if (comObj && 'getState' in comObj) {
                 const state = (comObj as any).getState();
                 if (state?.format) {
+                    const surfType = binkSurfaceFromFormat(state.format);
                     this.lastSurfaceBpp = Math.ceil(state.format.bpp / 8);
-                    console.log(`[BINK] BinkDDSurfaceType(0x${surfAddr.toString(16)}): ` +
-                        `bpp=${state.format.bpp} rMask=0x${state.format.rMask.toString(16)} → stored destBpp=${this.lastSurfaceBpp}`);
-                    return 0;
+                    Logger.log(LogCategory.SYSTEM, `[BINK] BinkDDSurfaceType(0x${surfAddr.toString(16)}): ` +
+                        `bpp=${state.format.bpp} rMask=0x${state.format.rMask?.toString(16)} → ${surfType} (stored destBpp=${this.lastSurfaceBpp})`);
+                    return surfType;
                 }
             }
 
             // Fallback: use display bpp from DDraw context
             const ctx = sys.ddrawContext;
             if (ctx) {
-                this.lastSurfaceBpp = Math.ceil(ctx.display.bpp / 8);
-                console.log(`[BINK] BinkDDSurfaceType(0x${surfAddr.toString(16)}): ` +
-                    `fallback display.bpp=${ctx.display.bpp} → stored destBpp=${this.lastSurfaceBpp}`);
-                return 0;
+                const bpp = ctx.display.bpp;
+                const surfType = bpp === 16 ? BinkSurface.RGB565 : bpp === 32 ? BinkSurface.BGRA32 : BinkSurface.P8;
+                this.lastSurfaceBpp = Math.ceil(bpp / 8);
+                Logger.log(LogCategory.SYSTEM, `[BINK] BinkDDSurfaceType(0x${surfAddr.toString(16)}): ` +
+                    `fallback display.bpp=${ctx.display.bpp} → ${surfType} (stored destBpp=${this.lastSurfaceBpp})`);
+                return surfType;
             }
 
-            console.log(`[BINK] BinkDDSurfaceType(0x${surfAddr.toString(16)}): no DDraw context, assuming 32bpp`);
-            this.lastSurfaceBpp = 4;
-            return 0;
+            Logger.log(LogCategory.SYSTEM, `[BINK] BinkDDSurfaceType(0x${surfAddr.toString(16)}): no DDraw context, assuming 16bpp RGB565`);
+            this.lastSurfaceBpp = 2;
+            return BinkSurface.RGB565;
         };
         this.exports["_BinkGetError@0"]      = (_ctx, _mem, _args) => { console.log(`[BINK] BinkGetError() → null`); return 0; };
         this.exports["_BinkLogoAddress@0"]   = (_ctx, _mem, _args) => 0;
