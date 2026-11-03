@@ -93,7 +93,8 @@ export const createDefaultPixelFormat = (bpp: number): SurfaceFormat => {
 export const computePitch = (width: number, bpp: number): number => {
     const bytesPerPixel = Math.max(1, Math.floor(bpp / 8));
     const rowBytes = Math.max(1, width) * bytesPerPixel;
-    return (rowBytes + 31) & ~31;
+    // DirectDraw row pitch is DWORD (4-byte) aligned (wine wined3d_format_calculate_pitch).
+    return (rowBytes + 3) & ~3;
 };
 
 /**
