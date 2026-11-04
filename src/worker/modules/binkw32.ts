@@ -647,6 +647,7 @@ export class BinkW32 implements IModule {
     }
 
     private hasAppManagedSink(s: BinkSession): boolean {
+        if (System.getInstance().ddrawContext) return true;
         if (s.explicitDdrawSurface || s.explicitGlideSurfacePtr) return true;
         if (!s.destPtr && !s.hasBufferApiHint) return false;
         if (this.resolveDdrawSurfaceStateBySurfacePtr(s.destPtr)) return true;
@@ -668,6 +669,13 @@ export class BinkW32 implements IModule {
                 pitch: ddraw.pitch,
                 width: ddraw.width,
                 height: ddraw.height,
+            };
+        }
+        if (System.getInstance().ddrawContext) {
+            return {
+                kind: "ddraw_surface",
+                valid: true,
+                note: "ddraw context active",
             };
         }
         if (s.explicitGlideSurfacePtr) {
@@ -1637,14 +1645,6 @@ export class BinkW32 implements IModule {
             const { surf, destBpp, copyWidth, rows, destSurface } = this.getCopyGeometry(
                 s, destPtr, pitch, destH, destX, destY, this.lastSurfaceBpp, rawFlags,
             );
-            if (!s.loggedCopy) {
-                s.loggedCopy = true;
-                Logger.log(LogCategory.SYSTEM, `[BINK] BinkCopyToBuffer: bink=0x${bink.toString(16)} dest=0x${destPtr.toString(16)} ` +
-                    `pitch=${pitch} destH=${destH} destX=${destX} destY=${destY} flags=0x${rawFlags.toString(16)} ` +
-                    `video=${s.width}x${s.height} copy=${copyWidth}x${rows} surf=${surf} destBpp=${destBpp} ` +
-                    `storedBpp=${this.lastSurfaceBpp} d3d8=${destSurface ? `${destSurface.width}x${destSurface.height}` : "no"}`);
-            }
-
             s.destPtr = destPtr;
             s.destPitch = pitch;
             s.destHeight = destH;
@@ -1655,6 +1655,14 @@ export class BinkW32 implements IModule {
             s.hasBufferApiHint = true;
             s.hasPointerFault = false;
             this.updateExplicitSinkHints(s, destPtr);
+
+            if (!s.loggedCopy) {
+                s.loggedCopy = true;
+                Logger.log(LogCategory.SYSTEM, `[BINK] BinkCopyToBuffer: bink=0x${bink.toString(16)} dest=0x${destPtr.toString(16)} ` +
+                    `pitch=${pitch} destH=${destH} destX=${destX} destY=${destY} flags=0x${rawFlags.toString(16)} ` +
+                    `video=${s.width}x${s.height} copy=${copyWidth}x${rows} surf=${surf} destBpp=${destBpp} ` +
+                    `storedBpp=${this.lastSurfaceBpp} d3d8=${destSurface ? `${destSurface.width}x${destSurface.height}` : "no"}`);
+            }
 
             if (rows <= 0 || copyWidth <= 0) return 0;
             const markPointerFault = () => {
@@ -1787,13 +1795,6 @@ export class BinkW32 implements IModule {
                     this.lastSurfaceBpp
                     || detectDestBpp(pitch, inferDestRowPixels(pitch, this.lastSurfaceBpp, destSurface) || s.width));
             const destBpp = binkSurfaceBpp(surf);
-            if (!s.loggedCopy) {
-                s.loggedCopy = true;
-                Logger.log(LogCategory.SYSTEM, `[BINK] BinkCopyToBufferRect: bink=0x${bink.toString(16)} dest=0x${destPtr.toString(16)} ` +
-                    `pitch=${pitch} destH=${destH} destX=${destX} destY=${destY} flags=0x${rawFlags.toString(16)} ` +
-                    `video=${s.width}x${s.height} copy=${clipW}x${clipH} surf=${surf} destBpp=${destBpp} ` +
-                    `storedBpp=${this.lastSurfaceBpp} d3d8=${destSurface ? `${destSurface.width}x${destSurface.height}` : "no"}`);
-            }
             s.destPtr = destPtr;
             s.destPitch = pitch;
             s.destHeight = destH;
@@ -1804,6 +1805,14 @@ export class BinkW32 implements IModule {
             s.hasBufferApiHint = true;
             s.hasPointerFault = false;
             this.updateExplicitSinkHints(s, destPtr);
+
+            if (!s.loggedCopy) {
+                s.loggedCopy = true;
+                Logger.log(LogCategory.SYSTEM, `[BINK] BinkCopyToBufferRect: bink=0x${bink.toString(16)} dest=0x${destPtr.toString(16)} ` +
+                    `pitch=${pitch} destH=${destH} destX=${destX} destY=${destY} flags=0x${rawFlags.toString(16)} ` +
+                    `video=${s.width}x${s.height} copy=${clipW}x${clipH} surf=${surf} destBpp=${destBpp} ` +
+                    `storedBpp=${this.lastSurfaceBpp} d3d8=${destSurface ? `${destSurface.width}x${destSurface.height}` : "no"}`);
+            }
             const markPointerFault = () => {
                 if (!s.hasPointerFault) {
                     s.hasPointerFault = true;

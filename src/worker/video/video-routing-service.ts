@@ -320,7 +320,7 @@ export class VideoRoutingService {
             // Unlock overlay when the app starts presenting the video itself.
             // Without this, stale overlay content keeps being composited on every
             // present — visible as fullscreen video drawn over the game's UI.
-            if ((appPresented && this.shouldTrustAppPresent(session)) || session.hasAppManagedSink) {
+            if ((appPresented && this.shouldTrustAppPresent(session)) || session.hasAppManagedSink || this.render.getLastPresenterKind() === "ddraw") {
                 session.sinkLockedToOverlay = false;
                 if (this.overlay.getOwnerSessionKey() === session.sessionKey) {
                     this.overlay.clear("app_presenting");
@@ -511,6 +511,7 @@ export class VideoRoutingService {
                 !this.shouldTrustAppPresent(s) &&
                 s.targetHint.kind !== "ddraw_surface" &&
                 s.targetHint.kind !== "glide_lfb" &&
+                this.render.getLastPresenterKind() !== "ddraw" &&
                 !!s.frameViews &&
                 !!this.render.getBackend(),
             submit: (s) => this.tryOverlaySubmit(s),
