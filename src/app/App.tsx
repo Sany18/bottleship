@@ -500,6 +500,8 @@ export default function App() {
     const uninstall = installPointerKindWatcher();
     const unsubscribe = subscribePointerKind((kind) => {
       pointerSourceRef.current = kind;
+      // Pointer Lock is the mouse transport only; a touch or pen contact under it has no position.
+      if (kind !== "mouse" && document.pointerLockElement) document.exitPointerLock();
       setLastPointerKind(kind);
       assertVirtualPad();
     });
@@ -744,6 +746,10 @@ export default function App() {
       const c = canvasRef.current;
       if (!c || userReleasedLockRef.current || pointerLockedRef.current) return;
       if (!relativeIntent.get()) return;
+      // This window-capture listener runs before the document-level pointer-kind watcher,
+      // so on a first touch the latch still says "mouse": judge by the event itself. A
+      // locked touch contact reports clientX/Y 0, which lands every tap at the corner.
+      if (e.pointerType !== "mouse") return;
       // Scoped to the game stage (canvas + its overlays). Since this stays armed until
       // the lock engages, an unscoped handler would grab the pointer on every click on
       // the host shell's own buttons and menus and make them unusable mid-game.
