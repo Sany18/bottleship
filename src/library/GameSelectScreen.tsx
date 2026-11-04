@@ -39,6 +39,9 @@ export interface GameEntry {
    *  reverse proxy, high-RTT link): one sequential download beats hundreds of reads. */
   preload?: boolean;
   io?: import("@bottleship/formats/wgb/io-profile").WgbIoPolicy;
+  /** On-screen touch controls when the bundle's manifest names none (`emulator.touch`): a host
+   *  that embeds one game sets them per title in its catalog, without rebuilding the bundle. */
+  touch?: import("../input/controls/use-active-layout").ManifestTouch;
 }
 
 interface GameSelectScreenProps {
