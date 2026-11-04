@@ -294,7 +294,7 @@ export default function App() {
     if (!EMBED) return;
     window.parent.postMessage({
       source: "bs-embed",
-      progress: loadingProgress && { phase: loadingProgress.phase, percent: loadingProgress.percent, label: loadingProgress.label, indeterminate: !!loadingProgress.indeterminate, fadingOut: !!loadingProgress.fadingOut },
+      progress: loadingProgress && { phase: loadingProgress.phase, percent: loadingProgress.percent, label: loadingProgress.label, indeterminate: !!loadingProgress.indeterminate, fadingOut: !!loadingProgress.fadingOut, loaded: loadingProgress.loaded, total: loadingProgress.total },
       error: errorMessage,
       exit: exitInfo && {
         code: exitInfo.code, crashed: !!exitInfo.crashed,
@@ -318,6 +318,8 @@ export default function App() {
   // `fadingOut` triggers the crossfade-out once the guest composites its first frame.
   const [loadingProgress, setLoadingProgress] = useState<{
     phase: string; percent: number; label?: string; indeterminate?: boolean; fadingOut?: boolean;
+    /** Bytes of a byte-counted phase (downloading/caching/installing); total 0 = unknown. */
+    loaded?: number; total?: number;
   } | null>(null);
   /** Display name from the loaded WGB manifest (title || name). Used so ?game=dev&load=…
    *  doesn't keep saying "Dev" / "Starting Dev" once the bundle is known. */
@@ -498,6 +500,8 @@ export default function App() {
     const uninstall = installPointerKindWatcher();
     const unsubscribe = subscribePointerKind((kind) => {
       pointerSourceRef.current = kind;
+      // Pointer Lock is the mouse transport only; a touch or pen contact under it has no position.
+      if (kind !== "mouse" && document.pointerLockElement) document.exitPointerLock();
       setLastPointerKind(kind);
       assertVirtualPad();
     });
@@ -742,6 +746,10 @@ export default function App() {
       const c = canvasRef.current;
       if (!c || userReleasedLockRef.current || pointerLockedRef.current) return;
       if (!relativeIntent.get()) return;
+      // This window-capture listener runs before the document-level pointer-kind watcher,
+      // so on a first touch the latch still says "mouse": judge by the event itself. A
+      // locked touch contact reports clientX/Y 0, which lands every tap at the corner.
+      if (e.pointerType !== "mouse") return;
       // Scoped to the game stage (canvas + its overlays). Since this stays armed until
       // the lock engages, an unscoped handler would grab the pointer on every click on
       // the host shell's own buttons and menus and make them unusable mid-game.
@@ -1467,7 +1475,7 @@ export default function App() {
         setManifestTouch((event.data.touch as ManifestTouch | null) ?? catalogTouchRef.current ?? null);
       }
       if (event.data?.type === "loading_progress") {
-        const { phase, percent, label } = event.data;
+        const { phase, percent, label, loaded, total } = event.data;
         // Progress belonging to a load that already died is stale — a fresh load clears
         // exitInfo at its own start, so anything arriving while one is set is the corpse
         // of the previous one talking.
@@ -1490,7 +1498,8 @@ export default function App() {
           // Byte-counted phases (downloading/caching/installing) show a real bar; the rest
           // (loading/starting) have no measurable progress → indeterminate shimmer.
           const determinate = phase === "downloading" || phase === "caching" || phase === "installing" || phase === "prefetch";
-          setLoadingProgress({ phase, percent: percent ?? 0, label, indeterminate: !determinate });
+          setLoadingProgress({ phase, percent: percent ?? 0, label, indeterminate: !determinate,
+            ...(typeof loaded === "number" ? { loaded, total: typeof total === "number" ? total : 0 } : {}) });
         }
       }
       if (event.data?.type === "first_present") {
@@ -1518,6 +1527,7 @@ export default function App() {
           percent: pct,
           label: phase === "installing" ? `${doneMb} / ${totalMb} MB` : phase,
           indeterminate: phase !== "installing",
+          loaded: doneBytes, total: totalBytes > 0 ? totalBytes : 0,
         });
         if (phase === "starting") {
           setLoadingProgress({ phase: "starting", percent: 100, label: "", indeterminate: true });
