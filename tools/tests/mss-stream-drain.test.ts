@@ -25,12 +25,18 @@ beforeAll(async () => {
         port = { postMessage(_msg: unknown) {}, onmessage: null as any };
     });
     installGlobal("registerProcessor", (name: string, ctor: unknown) => {
-        if (name === "bottleship-audio") Processor = ctor;
+        if (name === "bottleship-audio") {
+            Processor = ctor;
+            (globalThis as any).__bottleshipAudioProcessor = ctor;
+        }
     });
     installGlobal("sampleRate", 48000);
     installGlobal("currentTime", 0);
     installGlobal("self", { postMessage(_msg: unknown) {} });
     await import("../../src/audio/bottleship-audio-worklet");
+    if ((globalThis as any).__bottleshipAudioProcessor) {
+        Processor = (globalThis as any).__bottleshipAudioProcessor;
+    }
 });
 
 afterAll(() => {

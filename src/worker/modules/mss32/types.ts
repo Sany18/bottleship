@@ -6,7 +6,8 @@ export interface MSSSample {
     handle: number;
     fileData: Uint8Array | null;
     decodedData: Float32Array | null;
-    streamBuffers?: { ptr: number; size: number; inUse: boolean }[];
+    streamBuffers?: { ptr: number; size: number; inUse: boolean; playEndFrames?: number }[];
+    totalWrittenFrames?: number;
     userData?: number[];
     totalBytes?: number;
     fileFormat?: "wav" | "mp3" | "ogg" | "unknown";

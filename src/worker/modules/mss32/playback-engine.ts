@@ -97,19 +97,19 @@ function releaseRingBuffer(id: number): void {
 // would read as a completely empty one.
 
 /** Float32 frames the worklet plays from; the guest's own block align is unrelated. */
-function ringFrameBytes(stream: MSSStream): number {
-    return Math.max(1, stream.channels) * 4;
+function ringFrameBytes(item: { channels: number }): number {
+    return Math.max(1, item.channels) * 4;
 }
 
-/** (Re)create a stream's streaming ring. `ringBytes` is rounded down to whole frames. */
-export function ensureStreamingRing(stream: MSSStream, ringBytes: number): SharedArrayBuffer {
-    releaseRingBuffer(stream.id);
+/** (Re)create a stream's or sample's streaming ring. `ringBytes` is rounded down to whole frames. */
+export function ensureStreamingRing(item: MSSStream | MSSSample, ringBytes: number): SharedArrayBuffer {
+    releaseRingBuffer(item.id);
 
-    const frameBytes = ringFrameBytes(stream);
+    const frameBytes = ringFrameBytes(item);
     const bytes = Math.max(frameBytes * 2, Math.floor(ringBytes / frameBytes) * frameBytes);
     const sab = createAudioRingBuffer(bytes, {
-        channels: stream.channels,
-        sampleRate: stream.sampleRate,
+        channels: item.channels,
+        sampleRate: item.playbackRateHz || item.sampleRate,
         bitsPerSample: 32,
     }, true /* circular */);
 
@@ -121,18 +121,18 @@ export function ensureStreamingRing(stream: MSSStream, ringBytes: number): Share
     setCtrl(sab, CTRL_RESERVED, 1);
 
     ensureAudioStatsSab();
-    self.postMessage({ type: "audio_register", payload: { id: stream.id, sab } });
-    ringBuffers.set(stream.id, { sab, registered: true, streaming: true, writeBytes: 0 });
+    self.postMessage({ type: "audio_register", payload: { id: item.id, sab } });
+    ringBuffers.set(item.id, { sab, registered: true, streaming: true, writeBytes: 0 });
     return sab;
 }
 
 /** Bytes the producer may write right now (one frame of headroom is never offered). */
-export function streamingRingFreeBytes(stream: MSSStream): number {
-    const entry = ringBuffers.get(stream.id);
+export function streamingRingFreeBytes(item: MSSStream | MSSSample): number {
+    const entry = ringBuffers.get(item.id);
     if (!entry?.streaming) return 0;
     const ringBytes = getCtrl(entry.sab, CTRL_DATA_LENGTH);
     if (ringBytes <= 0) return 0;
-    const frameBytes = ringFrameBytes(stream);
+    const frameBytes = ringFrameBytes(item);
     const play = getCtrl(entry.sab, CTRL_PLAY_CURSOR) % ringBytes;
     const write = (entry.writeBytes ?? 0) % ringBytes;
     const used = (write - play + ringBytes) % ringBytes;
@@ -140,10 +140,32 @@ export function streamingRingFreeBytes(stream: MSSStream): number {
 }
 
 /** Total ring capacity in bytes, or 0 when the stream has no streaming ring. */
-export function streamingRingBytes(stream: MSSStream): number {
-    const entry = ringBuffers.get(stream.id);
+export function streamingRingBytes(item: MSSStream | MSSSample): number {
+    const entry = ringBuffers.get(item.id);
     if (!entry?.streaming) return 0;
     return getCtrl(entry.sab, CTRL_DATA_LENGTH);
+}
+
+/** Decoded bytes currently buffered in the ring (between play and write cursors). */
+export function streamingRingUsedBytes(item: MSSStream | MSSSample): number {
+    const entry = ringBuffers.get(item.id);
+    if (!entry?.streaming) return 0;
+    const ringBytes = getCtrl(entry.sab, CTRL_DATA_LENGTH);
+    if (ringBytes <= 0) return 0;
+    const play = getCtrl(entry.sab, CTRL_PLAY_CURSOR) % ringBytes;
+    const write = (entry.writeBytes ?? 0) % ringBytes;
+    return (write - play + ringBytes) % ringBytes;
+}
+
+/** Monotonic frames consumed by the worklet from an incrementally fed sample. */
+export function sampleStreamingPlayedFrames(sample: MSSSample): number {
+    const totalWritten = sample.totalWrittenFrames ?? 0;
+    const ringBytes = streamingRingBytes(sample);
+    if (ringBytes <= 0) return totalWritten;
+    const frameBytes = ringFrameBytes(sample);
+    const usedBytes = streamingRingUsedBytes(sample);
+    const bufferedFrames = Math.floor(usedBytes / frameBytes);
+    return Math.max(0, totalWritten - bufferedFrames);
 }
 
 /**
@@ -151,15 +173,15 @@ export function streamingRingBytes(stream: MSSStream): number {
  * FLOATS consumed, so the caller can keep the remainder for the next refill
  * rather than dropping it (a dropped tail is an inaudible click, not an error).
  */
-export function appendStreamingRing(stream: MSSStream, floats: Float32Array, fromFloat = 0): number {
-    const entry = ringBuffers.get(stream.id);
+export function appendStreamingRing(item: MSSStream | MSSSample, floats: Float32Array, fromFloat = 0): number {
+    const entry = ringBuffers.get(item.id);
     if (!entry?.streaming) return 0;
     const ringBytes = getCtrl(entry.sab, CTRL_DATA_LENGTH);
     if (ringBytes <= 0) return 0;
 
-    const frameBytes = ringFrameBytes(stream);
+    const frameBytes = ringFrameBytes(item);
     const offered = (floats.length - fromFloat) * 4;
-    const room = Math.floor(streamingRingFreeBytes(stream) / frameBytes) * frameBytes;
+    const room = Math.floor(streamingRingFreeBytes(item) / frameBytes) * frameBytes;
     const bytes = Math.min(offered, room);
     if (bytes <= 0) return 0;
 
@@ -176,8 +198,8 @@ export function appendStreamingRing(stream: MSSStream, floats: Float32Array, fro
 }
 
 /** Drop everything buffered and restart the ring at zero (seek / loop restart). */
-export function resetStreamingRing(stream: MSSStream): void {
-    const entry = ringBuffers.get(stream.id);
+export function resetStreamingRing(item: MSSStream | MSSSample): void {
+    const entry = ringBuffers.get(item.id);
     if (!entry?.streaming) return;
     entry.writeBytes = 0;
     setCtrl(entry.sab, CTRL_PLAY_CURSOR, 0);
@@ -186,30 +208,35 @@ export function resetStreamingRing(stream: MSSStream): void {
 }
 
 /** The worklet's play cursor, in ring bytes. -1 when there is no streaming ring. */
-export function streamingRingPlayCursor(stream: MSSStream): number {
-    const entry = ringBuffers.get(stream.id);
+export function streamingRingPlayCursor(item: MSSStream | MSSSample): number {
+    const entry = ringBuffers.get(item.id);
     if (!entry?.streaming) return -1;
     return getCtrl(entry.sab, CTRL_PLAY_CURSOR);
 }
 
-/** Hand a streaming ring to the mixer. Volume/pan/rate come from the stream. */
-export function startStreamingRing(ctx: MSSContext, stream: MSSStream): void {
-    const entry = ringBuffers.get(stream.id);
+/** Hand a streaming ring to the mixer. Volume/pan/rate come from the stream/sample. */
+export function startStreamingRing(ctx: MSSContext, item: MSSStream | MSSSample): void {
+    const entry = ringBuffers.get(item.id);
     if (!entry?.streaming) return;
     const sab = entry.sab;
-    setCtrl(sab, CTRL_VOLUME, volumeToCentibels(mixedVolume127(ctx, stream.volume)));
-    setCtrl(sab, CTRL_PAN, panToCentibels(stream.pan));
-    setCtrl(sab, CTRL_FREQUENCY, stream.playbackRateHz || Math.round(stream.sampleRate * stream.playbackRate));
+    setCtrl(sab, CTRL_VOLUME, volumeToCentibels(mixedVolume127(ctx, item.volume)));
+    setCtrl(sab, CTRL_PAN, panToCentibels(item.pan));
+    setCtrl(sab, CTRL_FREQUENCY, item.playbackRateHz || Math.round(item.sampleRate * item.playbackRate));
     // FLAG_STREAMING wraps the ring; source loops are handled by the producer.
     // The consumer must hold at WRITE_CURSOR instead of replaying unwritten data.
     setCtrl(sab, CTRL_LOOP_MODE, 1);
     setCtrl(sab, CTRL_STATE, STATE_PLAYING);
 
-    stream.isPlaying = true;
-    stream.isPaused = false;
-    stream.pendingStart = false;
-    if (!stream.startTime) stream.startTime = performance.now();
-    setStreamStatus(ctx, stream, SMP_PLAYING);
+    item.isPlaying = true;
+    if ("isPaused" in item) item.isPaused = false;
+    if ("isStopped" in item) (item as MSSSample).isStopped = false;
+    item.pendingStart = false;
+    if (!item.startTime) item.startTime = performance.now();
+    if ("streamMemory" in item) {
+        setStreamStatus(ctx, item as MSSStream, SMP_PLAYING);
+    } else {
+        setSampleStatus(ctx, item as MSSSample, SMP_PLAYING);
+    }
 }
 
 /**
@@ -254,9 +281,9 @@ export function finishIncrementalStream(ctx: MSSContext, stream: MSSStream): voi
     Logger.log(LogCategory.SYSTEM, `MSS32: Stream id=${stream.id} finished (source exhausted, ring drained)`);
 }
 
-/** True when this stream is driven by the incremental engine. */
-export function hasStreamingRing(stream: MSSStream): boolean {
-    return !!ringBuffers.get(stream.id)?.streaming;
+/** True when this stream or sample is driven by the incremental streaming engine. */
+export function hasStreamingRing(item: MSSStream | MSSSample): boolean {
+    return !!ringBuffers.get(item.id)?.streaming;
 }
 
 /**
@@ -486,8 +513,10 @@ export function updateSamplePlayback(ctx: MSSContext, sample: MSSSample): void {
             ? sample.playbackRateHz
             : Math.round(sample.sampleRate * sample.playbackRate);
         setCtrl(entry.sab, CTRL_FREQUENCY, freqHz);
-        setCtrl(entry.sab, CTRL_LOOP_MODE, loopCountToMode(sample.loopCount));
-        writeLoopBlock(entry.sab, sample);
+        if (!entry.streaming) {
+            setCtrl(entry.sab, CTRL_LOOP_MODE, loopCountToMode(sample.loopCount));
+            writeLoopBlock(entry.sab, sample);
+        }
         return;
     }
 
@@ -812,7 +841,7 @@ export function updateEmulatorState(ctx: MSSContext): void {
     const now = performance.now();
 
     for (const sample of ctx.samples.values()) {
-        if (!sample.fileData) continue;
+        if (!sample.fileData && !sample.streamBuffers && !hasStreamingRing(sample)) continue;
 
         tryKickPendingSampleStart(ctx, sample);
 
@@ -821,6 +850,28 @@ export function updateEmulatorState(ctx: MSSContext): void {
         // Try reading position from ring buffer first
         const rbEntry = ringBuffers.get(sample.id);
         if (rbEntry && !isEncodedFormat(sample.fileFormat)) {
+            if (rbEntry.streaming) {
+                const playedFrames = sampleStreamingPlayedFrames(sample);
+                const bytesPerFrame = (sample.bitsPerSample >> 3 || 2) * sample.channels;
+                const newPos = playedFrames * bytesPerFrame;
+
+                if (newPos !== sample.position) {
+                    sample.position = newPos;
+                    writeSamplePosition(ctx, sample, newPos);
+                }
+
+                if (sample.streamBuffers) {
+                    for (const b of sample.streamBuffers) {
+                        if (b && b.inUse && b.playEndFrames !== undefined && playedFrames >= b.playEndFrames) {
+                            b.inUse = false;
+                        }
+                    }
+                }
+
+                setSampleStatus(ctx, sample, SMP_PLAYING);
+                continue;
+            }
+
             const playCursor = getCtrl(rbEntry.sab, CTRL_PLAY_CURSOR);
             const blockAlign = getCtrl(rbEntry.sab, CTRL_BLOCK_ALIGN);
             const newPos = blockAlign > 0 ? Math.floor(playCursor / blockAlign) * (sample.bitsPerSample >> 3 || 2) * sample.channels : playCursor;

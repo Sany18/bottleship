@@ -4,9 +4,13 @@ import { MemoryGuard } from "../../core/memory/mem-guard";
 import { MSSContext, SMP_PLAYING } from "./context";
 import { defaultStreamBufferSize, setSampleStatus } from "./helpers";
 import { convertToFloat } from "./audio-decode";
-import { playSample, appendDecodedChunk } from "./playback-engine";
-
-const MAX_STREAM_BUFFER_BYTES = 2 * 1024 * 1024; // 2MB cap for streaming audio
+import {
+    ensureStreamingRing,
+    appendStreamingRing,
+    startStreamingRing,
+    hasStreamingRing,
+    sampleStreamingPlayedFrames,
+} from "./playback-engine";
 
 export function createSampleBufferExports(ctx: MSSContext): Record<string, ThunkImplementation> {
     const exports: Record<string, ThunkImplementation> = {};
@@ -24,57 +28,38 @@ export function createSampleBufferExports(ctx: MSSContext): Record<string, Thunk
             return 1;
         }
 
-        if (!sampleObj.streamBuffers) sampleObj.streamBuffers = [];
-        const bufArr = sampleObj.streamBuffers;
-        const existing = bufArr[bufferNum];
-        const ptrCopy = dataPtr >>> 0;
-        const sizeCopy = dataLen >>> 0;
-        bufArr[bufferNum] = existing
-            ? { ...existing, ptr: ptrCopy, size: sizeCopy, inUse: true }
-            : { ptr: ptrCopy, size: sizeCopy, inUse: true };
-
-        if (!sampleObj.fileData) {
-            sampleObj.fileData = mem.slice(dataPtr, dataPtr + dataLen);
-        } else {
-            const prev = sampleObj.fileData;
-            const newTotal = prev.length + dataLen;
-            if (newTotal <= MAX_STREAM_BUFFER_BYTES) {
-                const grown = new Uint8Array(newTotal);
-                grown.set(prev, 0);
-                grown.set(mem.slice(dataPtr, dataPtr + dataLen), prev.length);
-                sampleObj.fileData = grown;
-            } else {
-                // Sliding window: keep recent data up to cap
-                const newChunk = mem.slice(dataPtr, dataPtr + dataLen);
-                const keepFromPrev = Math.max(0, MAX_STREAM_BUFFER_BYTES - dataLen);
-                const trimmed = new Uint8Array(keepFromPrev + dataLen);
-                if (keepFromPrev > 0) {
-                    trimmed.set(prev.subarray(prev.length - keepFromPrev), 0);
-                }
-                trimmed.set(newChunk, keepFromPrev);
-                sampleObj.fileData = trimmed;
-            }
-        }
-        sampleObj.fileDataAllocated = false;
-        sampleObj.fileDataAddress = sampleObj.fileDataAddress ?? dataPtr;
-        sampleObj.totalBytes = (sampleObj.totalBytes ?? 0) + dataLen;
-
         const channels = sampleObj.channels || 1;
         const bits = sampleObj.bitsPerSample || 16;
         const blockAlign = sampleObj.blockAlign || Math.max(1, (bits >> 3) * channels);
         const chunk = convertToFloat(mem.slice(dataPtr, dataPtr + dataLen), channels, bits, sampleObj.formatTag || 1, blockAlign);
 
-        if (!sampleObj.isPlaying) {
-            sampleObj.decodedData = chunk;
-            sampleObj.startTime = performance.now();
-            sampleObj.pendingStart = false;
-            playSample(ctx, sampleObj);
-        } else if (chunk.length > 0) {
-            appendDecodedChunk(ctx, sampleObj, chunk);
+        // Circular streaming ring: allocate at least 1MB if not yet created
+        if (!hasStreamingRing(sampleObj)) {
+            const ringBytes = Math.max(1024 * 1024, chunk.byteLength * 8);
+            ensureStreamingRing(sampleObj, ringBytes);
+            sampleObj.totalWrittenFrames = 0;
         }
 
-        bufArr[bufferNum].inUse = false;
-        setSampleStatus(ctx, sampleObj, SMP_PLAYING);
+        const floatsWritten = appendStreamingRing(sampleObj, chunk);
+        const framesWritten = Math.floor(floatsWritten / channels);
+
+        if (!sampleObj.streamBuffers) sampleObj.streamBuffers = [];
+        const total = sampleObj.totalWrittenFrames ?? 0;
+        const playEndFrames = total + framesWritten;
+        sampleObj.streamBuffers[bufferNum] = {
+            ptr: dataPtr >>> 0,
+            size: dataLen >>> 0,
+            inUse: true,
+            playEndFrames,
+        };
+        sampleObj.totalWrittenFrames = playEndFrames;
+
+        if (!sampleObj.isPlaying) {
+            startStreamingRing(ctx, sampleObj);
+        } else {
+            setSampleStatus(ctx, sampleObj, SMP_PLAYING);
+        }
+
         return 1;
     };
 
@@ -114,9 +99,32 @@ export function createSampleBufferExports(ctx: MSSContext): Record<string, Thunk
     // _AIL_sample_buffer_ready@4
     exports["_AIL_sample_buffer_ready@4"] = (ctxThunk, mem, args) => {
         const sampleObj = ctx.samples.get(args[0]);
-        if (!sampleObj?.streamBuffers) return 1;
-        const ready = sampleObj.streamBuffers.some(b => !b.inUse);
-        return ready ? 1 : 0;
+        if (!sampleObj) return -1;
+        if (!sampleObj.streamBuffers || sampleObj.streamBuffers.length === 0) {
+            return 0;
+        }
+
+        const playedFrames = sampleStreamingPlayedFrames(sampleObj);
+        for (const buf of sampleObj.streamBuffers) {
+            if (buf && buf.inUse && buf.playEndFrames !== undefined && playedFrames >= buf.playEndFrames) {
+                buf.inUse = false;
+            }
+        }
+
+        // Return first available buffer index (0 or 1 for double buffering), or -1 if all are busy
+        if (!sampleObj.streamBuffers[0] || !sampleObj.streamBuffers[0].inUse) {
+            return 0;
+        }
+        if (!sampleObj.streamBuffers[1] || !sampleObj.streamBuffers[1].inUse) {
+            return 1;
+        }
+        for (let i = 2; i < sampleObj.streamBuffers.length; i++) {
+            if (!sampleObj.streamBuffers[i] || !sampleObj.streamBuffers[i].inUse) {
+                return i;
+            }
+        }
+
+        return -1;
     };
 
     // _AIL_sample_buffer_info@20
@@ -130,6 +138,13 @@ export function createSampleBufferExports(ctx: MSSContext): Record<string, Thunk
         if (!sampleObj) return 0;
         if (!sampleObj.streamBuffers) sampleObj.streamBuffers = [];
         const view = new DataView(mem.buffer, mem.byteOffset, mem.byteLength);
+
+        const playedFrames = sampleStreamingPlayedFrames(sampleObj);
+        for (const buf of sampleObj.streamBuffers) {
+            if (buf && buf.inUse && buf.playEndFrames !== undefined && playedFrames >= buf.playEndFrames) {
+                buf.inUse = false;
+            }
+        }
 
         const buf = sampleObj.streamBuffers[bufIndex] ?? { ptr: 0, size: defaultStreamBufferSize(sampleObj), inUse: false };
         sampleObj.streamBuffers[bufIndex] = buf;

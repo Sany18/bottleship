@@ -14,7 +14,7 @@ import {
     AILSOUNDINFO_SIZE, DIG_F_16BITS_MASK, DIG_F_ADPCM_MASK, DIG_F_STEREO_MASK,
     convertToFloat, decodeAudioFile, readAilSoundInfo,
 } from "./audio-decode";
-import { playSample, updateSamplePlayback, stopRingBuffer, resumeRingBuffer, seekRingBuffer, applySample3D } from "./playback-engine";
+import { playSample, updateSamplePlayback, stopRingBuffer, resumeRingBuffer, seekRingBuffer, applySample3D, hasStreamingRing, startStreamingRing, releaseStreamRing } from "./playback-engine";
 import { System } from "../../core/system";
 import { i32ToFloat } from "../../../audio/audio-ring-buffer";
 import { ensureListener3D, writeListener3D } from "./spatial";
@@ -146,6 +146,9 @@ export function createSampleExports(ctx: MSSContext): Record<string, ThunkImplem
         sampleObj.lastAudioPositionBytes = undefined;
         sampleObj.lastRingCursorBytes = undefined;
         sampleObj.lastRingCursorTime = undefined;
+        sampleObj.streamBuffers = undefined;
+        sampleObj.totalWrittenFrames = undefined;
+        releaseStreamRing(sampleObj.id);
 
         // Full guest struct reinitialization (matching real MSS32)
         const dig = ctx.digitalDriverHandle;
@@ -165,6 +168,18 @@ export function createSampleExports(ctx: MSSContext): Record<string, ThunkImplem
         if (!sampleObj) {
             Logger.warn(LogCategory.SYSTEM, `MSS32: _AIL_start_sample@4: Invalid sample`);
             return 0;
+        }
+
+        if (hasStreamingRing(sampleObj)) {
+            if (sampleObj.isStopped) {
+                resumeRingBuffer(sampleObj.id);
+                sampleObj.isStopped = false;
+                sampleObj.isPlaying = true;
+                setSampleStatus(ctx, sampleObj, SMP_PLAYING);
+            } else if (!sampleObj.isPlaying) {
+                startStreamingRing(ctx, sampleObj);
+            }
+            return 1;
         }
 
         if (sampleObj.isStopped) {
@@ -291,6 +306,9 @@ export function createSampleExports(ctx: MSSContext): Record<string, ThunkImplem
             sampleObj.isStopped = false;
             sampleObj.position = 0;
             sampleObj.pendingStart = false;
+            sampleObj.streamBuffers = undefined;
+            sampleObj.totalWrittenFrames = undefined;
+            releaseStreamRing(sampleObj.id);
             setSampleStatus(ctx, sampleObj, SMP_DONE);
         }
         return 0;
