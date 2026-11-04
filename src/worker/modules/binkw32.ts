@@ -23,7 +23,7 @@ import { System } from "../core/system";
 import { EmulatorConfig } from "../core/emulator-config-manager";
 import { videoEngine } from "../../video/video-engine";
 import { CTRL_PLAY_CURSOR, CTRL_BUFFER_BYTES, CTRL_BLOCK_ALIGN, CTRL_SAMPLE_RATE, CTRL_STATE, STATE_PLAYING } from "../../audio/audio-ring-buffer";
-import { DirectDrawSurfaceObject, DirectDrawSurfaceState, isRenderSurface, type BitmapTextureSurface } from "./ddraw/com-objects";
+import { DirectDrawSurfaceObject, DirectDrawSurfaceState, isRenderSurface, isBitmapTexture, type BitmapTextureSurface } from "./ddraw/com-objects";
 import { setAuthorityCpu } from "./ddraw/surface-sync";
 import { resolveD3D8TextureSurface } from "./d3d8/shared-state";
 import { resolveD3D9LockedTextureTarget, d3d9TextureUploadSeq } from "./d3d9/shared-state";
@@ -252,7 +252,7 @@ function detectDestBpp(pitch: number, destRowPixels: number): number {
     return 4;
 }
 
-function inferDestRowPixels(pitch: number, storedBpp: number, surface: BitmapTextureSurface | null): number {
+function inferDestRowPixels(pitch: number, storedBpp: number, surface: DirectDrawSurfaceState | BitmapTextureSurface | null): number {
     if (surface?.width) return surface.width;
     if (storedBpp > 0 && pitch > 0 && pitch % storedBpp === 0) return pitch / storedBpp;
     const ddraw = System.getInstance().ddrawContext;
@@ -594,16 +594,21 @@ export class BinkW32 implements IModule {
     }
 
     private updateExplicitSinkHints(s: BinkSession, surfacePtr: number): void {
-        const bitmap = this.resolveBitmapTextureTarget(surfacePtr);
+        const ddraw = this.resolveDdrawSurfaceStateBySurfacePtr(surfacePtr);
+        const bitmap = ddraw ?? this.resolveBitmapTextureTarget(surfacePtr);
         if (!bitmap) {
             const locked = resolveD3D9LockedTextureTarget(surfacePtr);
             if (locked) s.d3d9LockTarget = locked;
         }
-        s.explicitDdrawSurface = bitmap;
-        if (bitmap && isRenderSurface(bitmap)) {
+        s.explicitDdrawSurface = ddraw ?? (bitmap && "surfaceType" in bitmap ? bitmap : null);
+        if (ddraw && isRenderSurface(ddraw)) {
+            setAuthorityCpu(ddraw);
+            ddraw.gpuDirty = true;
+            ddraw.surfaceEverWritten = true;
+        } else if (bitmap && isRenderSurface(bitmap)) {
             setAuthorityCpu(bitmap);
         }
-        s.explicitGlideSurfacePtr = bitmap ? 0 : this.resolveGlideLfbPointer(surfacePtr);
+        s.explicitGlideSurfacePtr = (ddraw || bitmap) ? 0 : this.resolveGlideLfbPointer(surfacePtr);
     }
 
     private getCopyGeometry(
@@ -615,8 +620,8 @@ export class BinkW32 implements IModule {
         destY: number,
         storedBpp: number,
         flags: number,
-    ): { surf: BinkSurface; destBpp: number; copyWidth: number; rows: number; destSurface: BitmapTextureSurface | null } {
-        const destSurface = this.resolveBitmapTextureTarget(destPtr);
+    ): { surf: BinkSurface; destBpp: number; copyWidth: number; rows: number; destSurface: DirectDrawSurfaceState | BitmapTextureSurface | null } {
+        const destSurface = this.resolveDdrawSurfaceStateBySurfacePtr(destPtr) ?? this.resolveBitmapTextureTarget(destPtr);
         const declared = binkSurfaceFromFlags(flags);
         const destRowPixels = inferDestRowPixels(pitch, storedBpp, destSurface);
         const surf = declared !== -1
@@ -643,6 +648,7 @@ export class BinkW32 implements IModule {
     private hasAppManagedSink(s: BinkSession): boolean {
         if (s.explicitDdrawSurface || s.explicitGlideSurfacePtr) return true;
         if (!s.destPtr && !s.hasBufferApiHint) return false;
+        if (this.resolveDdrawSurfaceStateBySurfacePtr(s.destPtr)) return true;
         // Morrowind-style D3D8: BinkCopyToBuffer → raw malloc buffer, then custom GPU upload.
         // Until we resolve a real texture/surface, don't block the video overlay fallback.
         if (isGpuVideoPresenterActive() && !this.resolveBitmapTextureTarget(s.destPtr)) {
@@ -859,6 +865,7 @@ export class BinkW32 implements IModule {
             const m = this.getMemory();
             const frames = this.readU32(m, bink + L.frames);
             this.writeU32(m, bink + L.frameNum, frames);
+            System.getInstance().videoRouting.closeSession("bink", bink);
             console.log(`[BINK] BinkDoFrame(0x${bink.toString(16)}): EOF (set FrameNum=${frames})`);
         } else {
             // Publish one whole-frame dirty rect (BINKRECT {Left,Top,Width,Height}) plus
@@ -1599,7 +1606,18 @@ export class BinkW32 implements IModule {
         // system" and the guest then plays the movie mute.
         this.exports["_BinkOpenDirectSound@4"] = (_ctx, _mem, _args) => 1;
 
-        // в”Ђв”Ђ BinkCopyToBuffer(HBINK, void* buf, pitch, h, x, y, flags) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+        const markDestSurfaceWritten = (surf: DirectDrawSurfaceState | BitmapTextureSurface | null) => {
+            if (!surf) return;
+            if (isBitmapTexture(surf)) {
+                surf.gpuNeedsUpload = true;
+            } else if (isRenderSurface(surf)) {
+                setAuthorityCpu(surf);
+                surf.gpuDirty = true;
+                surf.surfaceEverWritten = true;
+            }
+        };
+
+        // ── BinkCopyToBuffer(HBINK, void* buf, pitch, h, x, y, flags) ────────
         this.exports["_BinkCopyToBuffer@28"] = (_ctx, _mem, args) => {
             const bink    = args[0];
             const destPtr = args[1];
@@ -1663,7 +1681,7 @@ export class BinkW32 implements IModule {
                             return 0;
                         }
                     }
-                    if (destSurface) destSurface.gpuNeedsUpload = true;
+                    if (destSurface) markDestSurfaceWritten(destSurface);
                     return 0;
                 }
                 // Fallback: BGRA → luminance
@@ -1681,7 +1699,7 @@ export class BinkW32 implements IModule {
                         return 0;
                     }
                 }
-                if (destSurface) destSurface.gpuNeedsUpload = true;
+                if (destSurface) markDestSurfaceWritten(destSurface);
                 return 0;
             }
 
@@ -1700,7 +1718,7 @@ export class BinkW32 implements IModule {
                             return 0;
                         }
                     }
-                    if (destSurface) destSurface.gpuNeedsUpload = true;
+                    if (destSurface) markDestSurfaceWritten(destSurface);
                     return 0;
                 }
                 // Fallthrough: use JS-side typed array conversion (Tier 1)
@@ -1721,7 +1739,7 @@ export class BinkW32 implements IModule {
                     return 0;
                 }
             }
-            if (destSurface) destSurface.gpuNeedsUpload = true;
+            if (destSurface) markDestSurfaceWritten(destSurface);
             return 0;
         };
 
@@ -1744,7 +1762,7 @@ export class BinkW32 implements IModule {
             this._logApi(bink, "CopyToBufferRect", `dest=0x${destPtr.toString(16)} pitch=${pitch}`);
 
             const declared = binkSurfaceFromFlags(rawFlags);
-            const destSurface = this.resolveBitmapTextureTarget(destPtr);
+            const destSurface = this.resolveDdrawSurfaceStateBySurfacePtr(destPtr) ?? this.resolveBitmapTextureTarget(destPtr);
             let destBufferHeight = 0;
             if (destSurface?.height) {
                 destBufferHeight = destSurface.height;
@@ -1811,6 +1829,7 @@ export class BinkW32 implements IModule {
                             return 0;
                         }
                     }
+                    if (destSurface) markDestSurfaceWritten(destSurface);
                     return 0;
                 }
             }
@@ -1830,6 +1849,7 @@ export class BinkW32 implements IModule {
                     return 0;
                 }
             }
+            if (destSurface) markDestSurfaceWritten(destSurface);
             return 0;
         };
 

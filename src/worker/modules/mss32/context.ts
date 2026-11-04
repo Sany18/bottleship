@@ -149,7 +149,7 @@ export function createMSSContext(process: Process): MSSContext {
         driverNoopStub: 0,
         driverNoopTable: 0,
         driverSampleArray: 0,
-        driverMaxSamples: 16,
+        driverMaxSamples: 64,
         driverOutputRate: 44100,
         driverTypeTag: 0,
         sampleTypeTag: 0,
@@ -166,7 +166,7 @@ export function createMSSContext(process: Process): MSSContext {
         preferences: (() => {
             const p = new Array(32).fill(0);
             p[0] = 0;     // DIG_RESAMPLING_TOLERANCE (default 0)
-            p[1] = 16;    // DIG_MIXER_CHANNELS (max simultaneous samples; MSS32 default=16)
+            p[1] = 64;    // DIG_MIXER_CHANNELS (max simultaneous samples; was 16)
             p[2] = 500;   // DIG_LATENCY
             p[3] = 120;   // DIG_MIXER_GRANULARITY
             p[4] = 8;     // DIG_USE_WAVEOUT

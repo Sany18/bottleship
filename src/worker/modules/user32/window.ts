@@ -1357,9 +1357,10 @@ export function createWindowExports(): Record<string, ThunkImplementation> {
                 const activatable = (windowInfo.style & WS_CHILD_STYLE) === 0
                     && ((windowInfo.exStyle ?? 0) & WS_EX_NOACTIVATE) === 0;
                 if (guestVisibleProc && activatable
-                    && !(globalThis as { __noSyncCreateActivation?: boolean }).__noSyncCreateActivation
-                    && System.getInstance().windowManager.getActiveHwnd() === windowInfo.handle) {
-                    activationSteps = buildInitialActivationSteps(windowInfo.handle, windowInfo.wndProc);
+                    && !(globalThis as { __noSyncCreateActivation?: boolean }).__noSyncCreateActivation) {
+                    const prevActive = System.getInstance().windowManager.getActiveHwnd();
+                    System.getInstance().windowManager.setActiveWindow(windowInfo.handle);
+                    activationSteps = buildPendingActivationSteps(windowInfo.handle, windowInfo.wndProc, prevActive);
                     windowInfo.createSyncActivationDelivered = true;
                     markActivationDelivered(windowInfo.handle);
                 }

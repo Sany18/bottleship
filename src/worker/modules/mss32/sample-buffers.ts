@@ -21,7 +21,7 @@ export function createSampleBufferExports(ctx: MSSContext): Record<string, Thunk
         const bufferNum = args[1];
         const dataPtr = args[2];
         const dataLen = args[3];
-        Logger.verbose(LogCategory.SYSTEM, `MSS32: _AIL_load_sample_buffer@16 called: sample=0x${sample.toString(16)}, buf=${bufferNum}, len=${dataLen}`);
+        Logger.verbose(LogCategory.SYSTEM, `MSS32: _AIL_load_sample_buffer@16: sample=0x${sample.toString(16)}, buf=${bufferNum}, len=${dataLen}`);
 
         const sampleObj = ctx.samples.get(sample);
         if (!sampleObj || !dataPtr || dataLen <= 0) {
@@ -98,7 +98,8 @@ export function createSampleBufferExports(ctx: MSSContext): Record<string, Thunk
 
     // _AIL_sample_buffer_ready@4
     exports["_AIL_sample_buffer_ready@4"] = (ctxThunk, mem, args) => {
-        const sampleObj = ctx.samples.get(args[0]);
+        const handle = args[0];
+        const sampleObj = ctx.samples.get(handle);
         if (!sampleObj) return -1;
         if (!sampleObj.streamBuffers || sampleObj.streamBuffers.length === 0) {
             return 0;
@@ -123,7 +124,6 @@ export function createSampleBufferExports(ctx: MSSContext): Record<string, Thunk
                 return i;
             }
         }
-
         return -1;
     };
 
