@@ -165,6 +165,35 @@ describe("video plane composite policy", () => {
         // A debug read that cleared the plane it reports would destroy the evidence.
         expect(router.getDebugInfo().plane.reason).toBe("presenter_changed");
     });
+
+    test("an app-managed sink never falls back to the video overlay plane", () => {
+        const render = fakeRender();
+        render.state.draws = 1;
+        const router = new VideoRoutingService(render.service as never);
+        router.openSession({ codec: "bink", guestHandle: 1, width: 4, height: 4, fps: 25 });
+        for (let i = 0; i < 5; i++) {
+            router.onFrameDecoded({ codec: "bink", guestHandle: 1, frame: frame(), hasAppManagedSink: true });
+            router.onFrameFinalize({ codec: "bink", guestHandle: 1, hasAppManagedSink: true });
+        }
+        const plan = router.resolvePlanePlan();
+        expect(plan.onScreen).toBe(false);
+        expect(plan.canvas).toBeNull();
+    });
+
+    test("a ddraw surface video never falls back to the fullscreen overlay plane", () => {
+        const render = fakeRender();
+        render.state.draws = 1;
+        const router = new VideoRoutingService(render.service as never);
+        router.openSession({ codec: "bink", guestHandle: 1, width: 4, height: 4, fps: 25 });
+        const targetHint: Partial<VideoTargetHint> = { kind: "ddraw_surface", valid: true, width: 292, height: 484 };
+        for (let i = 0; i < 5; i++) {
+            router.onFrameDecoded({ codec: "bink", guestHandle: 1, frame: frame(292, 484), hasAppManagedSink: false, targetHint });
+            router.onFrameFinalize({ codec: "bink", guestHandle: 1, hasAppManagedSink: false, targetHint });
+        }
+        const plan = router.resolvePlanePlan();
+        expect(plan.onScreen).toBe(false);
+        expect(plan.canvas).toBeNull();
+    });
 });
 
 /**

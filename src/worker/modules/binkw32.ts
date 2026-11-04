@@ -24,6 +24,7 @@ import { EmulatorConfig } from "../core/emulator-config-manager";
 import { videoEngine } from "../../video/video-engine";
 import { CTRL_PLAY_CURSOR, CTRL_BUFFER_BYTES, CTRL_BLOCK_ALIGN, CTRL_SAMPLE_RATE, CTRL_STATE, STATE_PLAYING } from "../../audio/audio-ring-buffer";
 import { DirectDrawSurfaceObject, DirectDrawSurfaceState, isRenderSurface, isBitmapTexture, type BitmapTextureSurface } from "./ddraw/com-objects";
+import { DDSCAPS_PRIMARYSURFACE } from "./ddraw/constants";
 import { setAuthorityCpu } from "./ddraw/surface-sync";
 import { resolveD3D8TextureSurface } from "./d3d8/shared-state";
 import { resolveD3D9LockedTextureTarget, d3d9TextureUploadSeq } from "./d3d9/shared-state";
@@ -658,14 +659,15 @@ export class BinkW32 implements IModule {
     }
 
     private getRoutingTargetHint(s: BinkSession): { kind: "none" | "ddraw_surface" | "glide_lfb" | "app_buffer"; valid: boolean; surfacePtr?: number; pitch?: number; width?: number; height?: number; note?: string } {
-        if (s.explicitDdrawSurface?.surfacePtr) {
+        const ddraw = s.explicitDdrawSurface ?? (s.destPtr ? this.resolveDdrawSurfaceStateBySurfacePtr(s.destPtr) : null);
+        if (ddraw?.surfacePtr) {
             return {
                 kind: "ddraw_surface",
                 valid: true,
-                surfacePtr: s.explicitDdrawSurface.surfacePtr,
-                pitch: s.explicitDdrawSurface.pitch,
-                width: s.explicitDdrawSurface.width,
-                height: s.explicitDdrawSurface.height,
+                surfacePtr: ddraw.surfacePtr,
+                pitch: ddraw.pitch,
+                width: ddraw.width,
+                height: ddraw.height,
             };
         }
         if (s.explicitGlideSurfacePtr) {
@@ -806,6 +808,7 @@ export class BinkW32 implements IModule {
     private submitExplicitDdrawSink(s: BinkSession): boolean {
         const state = s.explicitDdrawSurface;
         if (!state?.surfacePtr) return false;
+        if ((state.caps & DDSCAPS_PRIMARYSURFACE) === 0) return false;
         const ddrawCtx = System.getInstance().ddrawContext;
         if (!ddrawCtx?.presenter) return false;
         if (isRenderSurface(state)) {
@@ -1523,7 +1526,7 @@ export class BinkW32 implements IModule {
                     hasAppManagedSink: this.hasAppManagedSink(s),
                     targetHint: this.getRoutingTargetHint(s),
                     legacyPrimarySink: null,
-                    explicitDdrawSink: s.explicitDdrawSurface ? () => this.submitExplicitDdrawSink(s) : null,
+                    explicitDdrawSink: (s.explicitDdrawSurface && (s.explicitDdrawSurface.caps & DDSCAPS_PRIMARYSURFACE) !== 0) ? () => this.submitExplicitDdrawSink(s) : null,
                     explicitGlideSink: null,
                 });
             }
@@ -1866,7 +1869,7 @@ export class BinkW32 implements IModule {
                     hasAppManagedSink: this.hasAppManagedSink(s),
                     targetHint: this.getRoutingTargetHint(s),
                     legacyPrimarySink: null,
-                    explicitDdrawSink: s.explicitDdrawSurface ? () => this.submitExplicitDdrawSink(s) : null,
+                    explicitDdrawSink: (s.explicitDdrawSurface && (s.explicitDdrawSurface.caps & DDSCAPS_PRIMARYSURFACE) !== 0) ? () => this.submitExplicitDdrawSink(s) : null,
                     explicitGlideSink: null,
                 });
             }

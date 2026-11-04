@@ -320,7 +320,7 @@ export class VideoRoutingService {
             // Unlock overlay when the app starts presenting the video itself.
             // Without this, stale overlay content keeps being composited on every
             // present — visible as fullscreen video drawn over the game's UI.
-            if (appPresented && this.shouldTrustAppPresent(session)) {
+            if ((appPresented && this.shouldTrustAppPresent(session)) || session.hasAppManagedSink) {
                 session.sinkLockedToOverlay = false;
                 if (this.overlay.getOwnerSessionKey() === session.sessionKey) {
                     this.overlay.clear("app_presenting");
@@ -373,6 +373,12 @@ export class VideoRoutingService {
                 session.presentSerialAtDecode = this.render.getGuestPresentSerial();
                 return session.sink;
             }
+        }
+
+        if (hasExpectedAppSink) {
+            this.updateSink(session, preferredObservedSink, `await_present miss=${session.consecutiveMisses}`);
+            session.presentSerialAtDecode = this.render.getGuestPresentSerial();
+            return session.sink;
         }
 
         this.warnThrottled(session, "drop", `[VideoRouting] sink=DROP session=${session.sessionKey} presenter=${this.render.getLastPresenterKind() ?? "none"}`);
@@ -500,7 +506,13 @@ export class VideoRoutingService {
             name: "video_overlay",
             kind: "VIDEO_OVERLAY",
             priority: 60,
-            canHandle: (s) => !!s.frameViews && !!this.render.getBackend(),
+            canHandle: (s) =>
+                !s.hasAppManagedSink &&
+                !this.shouldTrustAppPresent(s) &&
+                s.targetHint.kind !== "ddraw_surface" &&
+                s.targetHint.kind !== "glide_lfb" &&
+                !!s.frameViews &&
+                !!this.render.getBackend(),
             submit: (s) => this.tryOverlaySubmit(s),
         });
 
