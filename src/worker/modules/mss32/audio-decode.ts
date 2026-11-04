@@ -65,6 +65,25 @@ export function decodeAudioFile(ctx: MSSContext, sample: MSSSample, formatHint?:
     const hintLower = formatHint?.toLowerCase() ?? '';
     const forceMp3 = hintLower.endsWith('.mp3') || hintLower === 'mp3';
     const forceOgg = hintLower.endsWith('.ogg') || hintLower === 'ogg';
+    const forceRaw = hintLower.endsWith('.raw') || hintLower === 'raw' || hintLower.endsWith('.pcm');
+
+    if (forceRaw) {
+        sample.fileFormat = "wav";
+        sample.pcmBytes = sample.fileData.byteLength;
+        sample.decodedData = convertToFloat(sample.fileData, 2, 16, 1, 4);
+        sample.sampleRate = 22050;
+        sample.channels = 2;
+        sample.bitsPerSample = 16;
+        sample.formatTag = 1;
+        sample.blockAlign = 4;
+        const cacheKey = computeCacheKey(sample.fileData);
+        addToCache(cacheKey, sample.decodedData, 22050, 2);
+        refreshSampleLenDone(ctx, sample);
+        if (sample.pendingStart && sample.decodedData.length > 0) {
+            playSample(ctx, sample);
+        }
+        return;
+    }
 
     if (forceMp3 || isMp3(sample.fileData)) {
         const info = inspectEncodedAudio(sample.fileData, "mp3");
@@ -232,6 +251,25 @@ export function decodeStreamFile(ctx: MSSContext, stream: MSSStream): boolean {
         return true;
     }
 
+    if (isRawAudioPath(stream.filename)) {
+        stream.fileFormat = "wav";
+        stream.channels = 2;
+        stream.sampleRate = 22050;
+        stream.bitsPerSample = 16;
+        stream.formatTag = 1;
+        stream.blockAlign = 4;
+        stream.pcmBytes = stream.fileData.byteLength;
+        stream.decodedData = convertToFloat(stream.fileData, 2, 16, 1, 4);
+        addToCache(cacheKey, stream.decodedData, stream.sampleRate, stream.channels);
+        Logger.log(LogCategory.SYSTEM,
+            `MSS32: Stream decoded from RAW: "${stream.filename}" (${stream.decodedData.length} samples, 2 ch, 22050 Hz)`);
+        refreshStreamLenDone(ctx, stream);
+        if (stream.pendingStart) {
+            playStream(ctx, stream);
+        }
+        return true;
+    }
+
     Logger.error(LogCategory.SYSTEM, `MSS32: Failed to parse stream file: "${stream.filename ?? '(memory)'}"`);
     return false;
 }
@@ -260,6 +298,24 @@ export interface WavChunkInfo {
     blockAlign: number;
     dataChunkOffset: number;
     dataChunkSize: number;
+}
+
+export function isRawAudioPath(path?: string | null): boolean {
+    if (!path) return false;
+    const lower = path.toLowerCase();
+    return lower.endsWith(".raw") || lower.endsWith(".pcm");
+}
+
+export function makeRawWavInfo(fileSize: number): WavChunkInfo {
+    return {
+        formatTag: 1,
+        channels: 2,
+        sampleRate: 22050,
+        bitsPerSample: 16,
+        blockAlign: 4,
+        dataChunkOffset: 0,
+        dataChunkSize: fileSize,
+    };
 }
 
 /**

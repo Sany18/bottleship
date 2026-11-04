@@ -40,7 +40,7 @@ import {
     GuestCall, GuestCallChain, hasAppFileCallbacks, runGuestCallChain,
 } from "./app-file-io";
 import {
-    convertToFloat, countWavSampleFrames, scanWavChunks, WavChunkInfo,
+    convertToFloat, countWavSampleFrames, isRawAudioPath, makeRawWavInfo, scanWavChunks, WavChunkInfo,
 } from "./audio-decode";
 import {
     appendStreamingRing, ensureStreamingRing, hasStreamingRing, resetStreamingRing,
@@ -169,7 +169,10 @@ export function* openStreamSource(
                 const head = mem.slice(buffer, buffer + got);
                 // Not ours to decode (MP3/OGG, or a WAV variant convertToFloat refuses)
                 // → leave `adopted` false and let the whole-file path re-open it.
-                const info = scanWavChunks(head);
+                let info = scanWavChunks(head);
+                if (!info && isRawAudioPath(what)) {
+                    info = makeRawWavInfo(fileSize);
+                }
                 if (info && isIncrementalWavFormat(info)) {
                     adopted = adoptSource(ctx, stream, info, head,
                         { kind: "app", fileHandle, scratch, vfsHandle: null }, fileSize, what);
@@ -507,7 +510,10 @@ export async function openVfsStreamSource(ctx: MSSContext, stream: MSSStream, pa
 
     // Not ours to decode (MP3/OGG, or a WAV variant convertToFloat refuses) → the
     // whole-file path re-opens it and hands the encoded image to the host.
-    const info = scanWavChunks(head);
+    let info = scanWavChunks(head);
+    if (!info && isRawAudioPath(path)) {
+        info = makeRawWavInfo(fileSize);
+    }
     if (!info || !isIncrementalWavFormat(info)) return false;
 
     return adoptSource(ctx, stream, info, head,
@@ -560,7 +566,10 @@ export function sniffVfsStream(ctx: MSSContext, stream: MSSStream, path: string)
     // same false answer in the other direction. Let the async path decide.
     if (!head || head.length === 0) return "unknown";
 
-    const info = scanWavChunks(head);
+    let info = scanWavChunks(head);
+    if (!info && isRawAudioPath(path)) {
+        info = makeRawWavInfo(fileSize);
+    }
     if (info && isIncrementalWavFormat(info)) {
         const adopted = adoptSource(ctx, stream, info, head,
             { kind: "vfs", fileHandle: 0, scratch: 0, vfsHandle: handle }, fileSize, path);

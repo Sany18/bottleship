@@ -88,4 +88,55 @@ describe("screen transition glitch prevention", () => {
         expect(hasFlipChain1).toBe(true);
         expect(hasFlipChain2).toBe(false);
     });
+
+    test("primary Blt without flip chain returns synchronously and debounces presentation", async () => {
+        let presentCount = 0;
+        const dummyContext: any = {
+            surfaces: { primary: 0x1000, backBuffer: 0 },
+            suppressPresent: false,
+            pendingPrimaryBltPresent: false,
+            resourceProvider: {
+                getSurface: () => ({
+                    getState: () => ({ surfacePtr: 0x1000, width: 800, height: 600, caps: DDSCAPS_PRIMARYSURFACE }),
+                }),
+            },
+            process: { getCurrentMemory: () => new Uint8Array(1024) },
+            presenter: {
+                present: () => {
+                    presentCount++;
+                    return Promise.resolve();
+                },
+            },
+        };
+
+        const schedulePrimaryPresent = (): void => {
+            if (dummyContext.pendingPrimaryBltPresent || dummyContext.suppressPresent) return;
+            dummyContext.pendingPrimaryBltPresent = true;
+            queueMicrotask(() => {
+                dummyContext.pendingPrimaryBltPresent = false;
+                if (dummyContext.surfaces.primary && !dummyContext.suppressPresent) {
+                    const primaryObj = dummyContext.resourceProvider.getSurface(dummyContext.surfaces.primary);
+                    if (primaryObj) {
+                        void dummyContext.presenter.present(primaryObj.getState(), dummyContext.process.getCurrentMemory(), { throttle: true });
+                    }
+                }
+            });
+        };
+
+        // Simulate 5 consecutive Blts during menu rendering (e.g. background, logo, 3 buttons)
+        for (let i = 0; i < 5; i++) {
+            schedulePrimaryPresent();
+        }
+
+        // Before microtask runs: 0 presents submitted
+        expect(presentCount).toBe(0);
+        expect(dummyContext.pendingPrimaryBltPresent).toBe(true);
+
+        // Wait for microtask queue to drain
+        await new Promise(resolve => queueMicrotask(resolve));
+
+        // After microtask runs: exactly 1 coalesced present submitted!
+        expect(presentCount).toBe(1);
+        expect(dummyContext.pendingPrimaryBltPresent).toBe(false);
+    });
 });

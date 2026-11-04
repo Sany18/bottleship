@@ -634,6 +634,7 @@ export class DDraw implements IModule {
             },
             deferredUploadManager: new DeferredUploadManager(),
             suppressPresent: false,
+            pendingPrimaryBltPresent: false,
             deferredSurfacePtrFrees: [],
         };
 
@@ -841,6 +842,7 @@ export class DDraw implements IModule {
             // Reset primary/backbuffer surfaces
             this.context.surfaces.primary = 0;
             this.context.surfaces.backBuffer = 0;
+            this.context.pendingPrimaryBltPresent = false;
             
             // Reset presenter
             this.context.presenter.reset();

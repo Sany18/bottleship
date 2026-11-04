@@ -112,6 +112,8 @@ export type DDrawContext = {
     /** When true, DDraw auto-present triggers (Unlock/Flip/Blt) are suppressed.
      *  Used during video playback so only _compositeToPrimary presents frames. */
     suppressPresent: boolean;
+    /** True while a primary surface presentation triggered by Blt/BltFast is scheduled via queueMicrotask. */
+    pendingPrimaryBltPresent?: boolean;
     /** Gamma ramp state — persists across interface releases (display property). */
     gammaRamp?: {
         red: Float32Array;

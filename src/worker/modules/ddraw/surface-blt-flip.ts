@@ -733,6 +733,25 @@ export function createSurfaceBltFlipExports(context: DDrawContext): Record<strin
         return DD_OK;
     };
 
+    /**
+     * Debounced presenter trigger for primary surface blits without a flip chain.
+     * Prevents mid-frame presentation of partial blits (e.g. background/logo before buttons).
+     */
+    const schedulePrimaryPresent = (): void => {
+        if (context.pendingPrimaryBltPresent || context.suppressPresent) return;
+        context.pendingPrimaryBltPresent = true;
+        queueMicrotask(() => {
+            context.pendingPrimaryBltPresent = false;
+            if (context.surfaces.primary && !context.suppressPresent) {
+                const primaryObj = surfaceAt(context.resourceProvider, context.surfaces.primary);
+                if (primaryObj) {
+                    const currentMem = context.process.getCurrentMemory();
+                    void context.presenter.present(primaryObj.getState(), currentMem, { throttle: true });
+                }
+            }
+        });
+    };
+
     exports["IDirectDrawSurface7_Blt"] = (ctx, mem, args): number | Promise<number> => {
         const thisPtr = args[0];
         const lpDestRect = args[1];
@@ -981,34 +1000,19 @@ export function createSurfaceBltFlipExports(context: DDrawContext): Record<strin
 
         // Helper: present to primary (if needed), cleanup rects, return DD_OK.
         // PERF: Returns number directly when no present needed (common case).
-        const finishBlt = (): number | Promise<number> => {
+        const finishBlt = (): number => {
+            rectPool.release(effSrcRect);
+            rectPool.release(effDstRect);
+
             if (context.surfaces.primary && thisPtr === context.surfaces.primary) {
                 // In a flipping chain (Primary + BackBuffer), Flip() owns presentation.
                 // Out-of-band blits directly to the primary surface (e.g. logos or clears during
                 // transitions) must not trigger premature presentation of uncomposed frames.
                 const hasFlipChain = (dstState.caps & DDSCAPS_FLIP) !== 0 || !!context.surfaces.backBuffer;
-                if (hasFlipChain) {
-                    rectPool.release(effSrcRect);
-                    rectPool.release(effDstRect);
-                    return DD_OK;
+                if (!hasFlipChain) {
+                    schedulePrimaryPresent();
                 }
-                // Blt to primary triggers present for games without explicit Flip.
-                // Non-blocking: yield at most once per rAF cycle. Without this, games that
-                // do many Blts per visual frame (background + sprites + text) would stall
-                // 16ms on EACH Blt, and the spin loop would inflate virtual time N× too fast.
-                return framePacer.waitForFrameSlot({ nonBlocking: true }).then(() => {
-                    profiler.start("Blt:present");
-                    if (!context.suppressPresent) {
-                        void context.presenter.present(dstState, mem, { throttle: true });
-                    }
-                    profiler.end("Blt:present");
-                    rectPool.release(effSrcRect);
-                    rectPool.release(effDstRect);
-                    return DD_OK;
-                });
             }
-            rectPool.release(effSrcRect);
-            rectPool.release(effDstRect);
             return DD_OK;
         };
 
@@ -1317,21 +1321,13 @@ export function createSurfaceBltFlipExports(context: DDrawContext): Record<strin
             return finishBltFast();
         };
 
-        // BltFast to primary triggers present (same as Blt to primary).
-        // Many 2D games use BltFast exclusively for rendering.
-        // Non-blocking: yield at most once per rAF cycle (see Blt comment above).
-        const finishBltFast = (): number | Promise<number> => {
+        // BltFast to primary triggers debounced present (same as Blt to primary).
+        const finishBltFast = (): number => {
             if (context.surfaces.primary && thisPtr === context.surfaces.primary) {
                 const hasFlipChain = (dstState.caps & DDSCAPS_FLIP) !== 0 || !!context.surfaces.backBuffer;
-                if (hasFlipChain) {
-                    return DD_OK;
+                if (!hasFlipChain) {
+                    schedulePrimaryPresent();
                 }
-                return framePacer.waitForFrameSlot({ nonBlocking: true }).then(() => {
-                    if (!context.suppressPresent) {
-                        void context.presenter.present(dstState, mem, { throttle: true });
-                    }
-                    return DD_OK;
-                });
             }
             return DD_OK;
         };
