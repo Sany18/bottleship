@@ -564,6 +564,10 @@ export default function App() {
     };
   }, [gameIdFromUrl, selectedGame]);
   const gameDisplayName = bundleDisplayName ?? displayGame?.name ?? "Game";
+  // The catalog's touch controls, for a bundle whose manifest names none (read by the
+  // bundle_meta handler, which outlives renders).
+  const catalogTouchRef = useRef<ManifestTouch | null>(null);
+  useEffect(() => { catalogTouchRef.current = displayGame?.touch ?? null; }, [displayGame]);
   const browserSupport = useMemo(() => detectBrowserSupport(), []);
   // A deployment may admit only the browser it was rehearsed on (see deployment-config).
   // undefined = policy not loaded yet; null = allowed.
@@ -1460,7 +1464,7 @@ export default function App() {
         const nextGid = typeof event.data.gameId === "string" ? event.data.gameId : null;
         setGameId(nextGid);
         setEmbedGameId(nextGid);
-        setManifestTouch((event.data.touch as ManifestTouch | null) ?? null);
+        setManifestTouch((event.data.touch as ManifestTouch | null) ?? catalogTouchRef.current ?? null);
       }
       if (event.data?.type === "loading_progress") {
         const { phase, percent, label } = event.data;
@@ -2860,6 +2864,19 @@ export default function App() {
     }
   }, [togglePause]);
 
+  // Embedded: the host page's own menu triggers the touch HUD's actions (the HUD is hidden).
+  useEffect(() => {
+    if (!EMBED) return;
+    const HOST_ACTIONS: readonly HostAction[] = ["keyboard", "toggleControls", "releaseRelative", "pause"];
+    const onMessage = (event: MessageEvent) => {
+      const m = event.data as { source?: unknown; action?: unknown } | null;
+      if (event.source !== window.parent || !m || m.source !== "bs-host") return;
+      if ((HOST_ACTIONS as readonly unknown[]).includes(m.action)) handleHostAction(m.action as HostAction);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [handleHostAction]);
+
   const toggleFullscreen = useCallback(async () => {
     const panel = panelRef.current;
     const target = panel ?? canvasRef.current;
@@ -3358,7 +3375,9 @@ export default function App() {
           />
         )}
         {workerStatus === "ready" && <InputStatusOverlay status={inputStatus} />}
-        {workerStatus === "ready" && showTouchHud && (
+        {/* Embedded, the host page owns the menu (its button covers this corner) and
+            forwards these actions with postMessage {source: "bs-host", action}. */}
+        {workerStatus === "ready" && showTouchHud && !EMBED && (
           <TouchHud onHostAction={handleHostAction} />
         )}
         {workerStatus === "ready" && (
