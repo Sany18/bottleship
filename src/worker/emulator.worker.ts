@@ -1522,6 +1522,19 @@ const deepMergeInto = (target: Record<string, unknown>, src: Record<string, unkn
   }
 };
 
+/** True when the bundle at `url` (its size from a HEAD) exceeds the origin's free storage; false when either is unknown. */
+async function exceedsFreeStorage(url: string): Promise<boolean> {
+  try {
+    const estimate = await navigator.storage?.estimate?.();
+    if (!estimate?.quota) return false;
+    const head = await fetch(url, { method: "HEAD" });
+    const size = Number(head.headers.get("content-length") ?? 0);
+    return head.ok && size > 0 && size > estimate.quota - (estimate.usage ?? 0);
+  } catch {
+    return false;
+  }
+}
+
 async function importInstallerBundle(source: BuildSource) {
   const staged = await buildStagedBundle(source, (phase, percent, label) => {
     self.postMessage({ type: "loading_progress", phase, percent, label });
@@ -1647,6 +1660,14 @@ const loadBundleImpl = async (payload: { data?: Uint8Array; url?: string; blob?:
         }
       }
 
+      // A bundle larger than the origin's free storage (Brave grants an origin 2 GB) fits neither in OPFS nor in
+      // RAM: stream it without the disk cache, so the quota stays for the game's own writes (saves, overlay).
+      const overQuota = !bundle && await exceedsFreeStorage(url);
+      if (overQuota) {
+        Logger.warn(LogCategory.SYSTEM, `WGB: "${url}" is larger than the free storage — streaming it without a disk copy`);
+        payload = { ...payload, preload: false, io: { ...payload.io, mode: "stream" } };
+      }
+
       // Stream the bundle on demand instead of a full OPFS download — instant start,
       // NO blocking multi-GB copy (a 1.6 GB game boots after fetching just what the
       // boot path reads). Needs cross-origin isolation for the SAB I/O worker (prod
@@ -1667,7 +1688,7 @@ const loadBundleImpl = async (payload: { data?: Uint8Array; url?: string; blob?:
         try {
           // Cold reads from async-capable APIs park their guest thread; disk hits
           // keep the synchronous path. Without SAB, stage a complete local bundle.
-          const sabIo = await SabIoSource.create(url);
+          const sabIo = await SabIoSource.create(url, overQuota ? { disk: false } : undefined);
           const src = sabIo;
           (globalThis as { __wgbSabIo?: SabIoSource }).__wgbSabIo = sabIo;
           Logger.log(LogCategory.SYSTEM, `WGB: streaming "${url}" via SAB I/O worker`);
