@@ -738,6 +738,7 @@ export function createSurfaceBltFlipExports(context: DDrawContext): Record<strin
      * Prevents mid-frame presentation of partial blits (e.g. background/logo before buttons).
      */
     const schedulePrimaryPresent = (): void => {
+        context.gdiSurfaceVisible = false;
         if (context.pendingPrimaryBltPresent || context.suppressPresent) return;
         context.pendingPrimaryBltPresent = true;
         queueMicrotask(() => {

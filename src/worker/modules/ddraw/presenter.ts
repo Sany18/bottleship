@@ -705,12 +705,11 @@ export class DDrawPresenter implements RenderActive {
             notifyVideoPlaneComposited(videoPlan);
         }
 
-        // 2. GDI overlay on top (whole overlay, or only live dialog rects when the flip chain owns screen).
+        // 2. GDI overlay on top (ONLY live dialog rects when a DDraw frame is presenting).
+        // Never blit the full GDI overlay canvas over a rendered DirectDraw primary frame.
         if (overlay && system.gdiContext.hasOverlayContent()) {
             if (dialogRects?.length) {
                 webgpu.blitRects(overlay, targetView, encoder, dialogRects);
-            } else {
-                webgpu.blit(overlay, targetView, encoder);
             }
             if (system.gdiContext.isOverlayDirty()) {
                 system.gdiContext.clearOverlayDirty();
