@@ -1804,7 +1804,8 @@ export const createSurfaceExports = (context: DDrawContext): Record<string, Thun
                     // are immediately visible. Some games write video frames
                     // directly to the primary via Lock/Unlock without calling Flip.
                     const isPrimary = (state.caps & DDSCAPS_PRIMARYSURFACE) !== 0;
-                    if (isPrimary && context.presenter && !context.suppressPresent) {
+                    const hasFlipChain = (state.caps & DDSCAPS_FLIP) !== 0 || !!context.surfaces.backBuffer;
+                    if (isPrimary && !hasFlipChain && context.presenter && !context.suppressPresent) {
                         const lcPresent = lockCostProfiler.now();
                         void context.presenter.present(state, mem, { throttle: true });
                         lockCostProfiler.add(LP.upresent, lcPresent, ucClass);
@@ -1923,7 +1924,8 @@ export const createSurfaceExports = (context: DDrawContext): Record<string, Thun
 
                     // Auto-present for primary surface (see v7 Unlock for details)
                     const isPrimary = (state.caps & DDSCAPS_PRIMARYSURFACE) !== 0;
-                    if (isPrimary && context.presenter && !context.suppressPresent) {
+                    const hasFlipChain = (state.caps & DDSCAPS_FLIP) !== 0 || !!context.surfaces.backBuffer;
+                    if (isPrimary && !hasFlipChain && context.presenter && !context.suppressPresent) {
                         void context.presenter.present(state, mem, { throttle: true });
                     }
                 }
@@ -1973,7 +1975,8 @@ export const createSurfaceExports = (context: DDrawContext): Record<string, Thun
 
                     // Auto-present for primary surface (see v7 Unlock for details)
                     const isPrimary = (state.caps & DDSCAPS_PRIMARYSURFACE) !== 0;
-                    if (isPrimary && context.presenter && !context.suppressPresent) {
+                    const hasFlipChain = (state.caps & DDSCAPS_FLIP) !== 0 || !!context.surfaces.backBuffer;
+                    if (isPrimary && !hasFlipChain && context.presenter && !context.suppressPresent) {
                         void context.presenter.present(state, mem, { throttle: true });
                     }
                 }

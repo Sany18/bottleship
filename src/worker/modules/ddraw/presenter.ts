@@ -120,6 +120,21 @@ export class DDrawPresenter implements RenderActive {
         this.setBlendEnabled(false);
     }
 
+    /**
+     * Discard any queued/pending present calls and reset lastPresented view.
+     * Called during display mode changes so stale frames from the prior mode
+     * are never presented into the newly sized swapchain.
+     */
+    discardPendingPresents(): void {
+        const pendingResolvers = this.pendingResolvers.splice(0);
+        for (const resolver of pendingResolvers) {
+            resolver.resolve();
+        }
+        this.pendingSurface = null;
+        this.pendingOptions = null;
+        this.lastPresented = null;
+    }
+
     getCounters(): Record<string, number> {
         const system = System.getInstance();
         const ddraw = system.process?.getModule("ddraw") as any;

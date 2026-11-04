@@ -5,6 +5,7 @@ import { Marshaler } from "../../core/memory/marshaler";
 import { ComObjectFactory } from "../../core/com/base-com-object";
 import { allocateComObject, checkComGuard, COM_OBJECT_SIZE } from "../../core/com/com-memory";
 import { System } from "../../core/system";
+import { WebGPUBackend } from "../../backends/webgpu/webgpu-backend";
 import { DDrawContext } from "./context";
 import { memoryWatch } from "../../core/memory/memory-watch";
 import {
@@ -174,6 +175,13 @@ function normalizeExclusiveCoopWindow(system: System, ddrawCtx: DDrawContext, wi
 
 /** Apply host resize + restore GDI launcher chrome after SetDisplayMode. */
 function applyDisplayModeChange(system: System, ddrawCtx: DDrawContext, width: number, height: number): void {
+    // When changing display modes, immediately discard pending presents and clear the canvas
+    // to prevent residual or intermediate frames from being stretched across the new resolution.
+    ddrawCtx.presenter?.discardPendingPresents();
+    if (ddrawCtx.backend?.kind === "webgpu") {
+        (ddrawCtx.backend as WebGPUBackend).clearCanvas();
+    }
+
     // SetDisplayMode IS a mode-set — this is the size SM_CXSCREEN must report from now on.
     system.requestHostResize(width, height, {
         modeSet: true, bpp: ddrawCtx.display.bpp, refreshRate: ddrawCtx.display.refresh,
@@ -249,6 +257,10 @@ function applySetDisplayMode(
  * screen to GDI (the caller also sets gdiSurfaceVisible).
  */
 export function restoreDisplayModeToDesktop(system: System, ddrawCtx: DDrawContext): void {
+    ddrawCtx.presenter?.discardPendingPresents();
+    if (ddrawCtx.backend?.kind === "webgpu") {
+        (ddrawCtx.backend as WebGPUBackend).clearCanvas();
+    }
     const prevW = ddrawCtx.display.width;
     const prevH = ddrawCtx.display.height;
     const prevBpp = ddrawCtx.display.bpp;

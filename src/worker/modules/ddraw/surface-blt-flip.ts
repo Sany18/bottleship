@@ -983,6 +983,15 @@ export function createSurfaceBltFlipExports(context: DDrawContext): Record<strin
         // PERF: Returns number directly when no present needed (common case).
         const finishBlt = (): number | Promise<number> => {
             if (context.surfaces.primary && thisPtr === context.surfaces.primary) {
+                // In a flipping chain (Primary + BackBuffer), Flip() owns presentation.
+                // Out-of-band blits directly to the primary surface (e.g. logos or clears during
+                // transitions) must not trigger premature presentation of uncomposed frames.
+                const hasFlipChain = (dstState.caps & DDSCAPS_FLIP) !== 0 || !!context.surfaces.backBuffer;
+                if (hasFlipChain) {
+                    rectPool.release(effSrcRect);
+                    rectPool.release(effDstRect);
+                    return DD_OK;
+                }
                 // Blt to primary triggers present for games without explicit Flip.
                 // Non-blocking: yield at most once per rAF cycle. Without this, games that
                 // do many Blts per visual frame (background + sprites + text) would stall
@@ -1313,6 +1322,10 @@ export function createSurfaceBltFlipExports(context: DDrawContext): Record<strin
         // Non-blocking: yield at most once per rAF cycle (see Blt comment above).
         const finishBltFast = (): number | Promise<number> => {
             if (context.surfaces.primary && thisPtr === context.surfaces.primary) {
+                const hasFlipChain = (dstState.caps & DDSCAPS_FLIP) !== 0 || !!context.surfaces.backBuffer;
+                if (hasFlipChain) {
+                    return DD_OK;
+                }
                 return framePacer.waitForFrameSlot({ nonBlocking: true }).then(() => {
                     if (!context.suppressPresent) {
                         void context.presenter.present(dstState, mem, { throttle: true });

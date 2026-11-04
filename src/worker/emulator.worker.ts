@@ -2546,6 +2546,10 @@ const initV86 = async (canvas: OffscreenCanvas) => {
         state.width = width;
         state.height = height;
         syncOverlayToGuestScreen();
+        const backend = system.services.render.getBackend();
+        if (backend?.kind === "webgpu") {
+          (backend as any).clearCanvas?.();
+        }
         Logger.log(LogCategory.SYSTEM,
           `hostResize: guest mode ${width}x${height} (canvas=${state.canvas?.width ?? 0}x${state.canvas?.height ?? 0})`);
         self.postMessage({ type: "app_resize", width, height });

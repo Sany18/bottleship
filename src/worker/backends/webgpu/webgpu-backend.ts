@@ -330,6 +330,32 @@ export class WebGPUBackend implements RenderBackend {
         this.bindGroupCache = new WeakMap();
         this.nearestBindGroupCache = new WeakMap();
         this.postFx?.invalidate();
+        this.clearCanvas();
+    }
+
+    /**
+     * Immediately clear the WebGPU swapchain canvas with the background color (black).
+     * Prevents stale or residual frames from stretching across mode changes and canvas resizes.
+     */
+    clearCanvas(color: GPUColor = EmulatorConfig.getInstance().screenBackgroundColor): void {
+        if (!this.context || !this.device) return;
+        try {
+            const texture = this.context.getCurrentTexture();
+            const view = texture.createView();
+            const encoder = this.device.createCommandEncoder();
+            const pass = encoder.beginRenderPass({
+                colorAttachments: [{
+                    view,
+                    loadOp: "clear",
+                    clearValue: color,
+                    storeOp: "store",
+                }],
+            });
+            pass.end();
+            this.device.queue.submit([encoder.finish()]);
+        } catch {
+            // Swapchain might be unconfigured or lost during transition; ignore.
+        }
     }
 
     getDevice(): GPUDevice | null {
