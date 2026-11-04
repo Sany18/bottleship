@@ -1700,7 +1700,7 @@ const loadBundleImpl = async (payload: { data?: Uint8Array; url?: string; blob?:
           const percent = total > 0 ? Math.round(loaded / total * 100) : 0;
           const loadedMb = (loaded / 1024 / 1024).toFixed(0);
           const totalMb = total > 0 ? ` / ${(total / 1024 / 1024).toFixed(0)} MB` : " MB";
-          self.postMessage({ type: "loading_progress", phase: "downloading", percent, label: `${loadedMb}${totalMb}` });
+          self.postMessage({ type: "loading_progress", phase: "downloading", percent, label: `${loadedMb}${totalMb}`, loaded, total });
         });
         self.postMessage({ type: "loading_progress", phase: "starting", percent: 100, label: "" });
         return buf;
@@ -1721,7 +1721,7 @@ const loadBundleImpl = async (payload: { data?: Uint8Array; url?: string; blob?:
           const percent = total > 0 ? Math.round(loaded / total * 100) : 0;
           const loadedMb = (loaded / 1024 / 1024).toFixed(0);
           const totalMb = total > 0 ? ` / ${(total / 1024 / 1024).toFixed(0)} MB` : " MB";
-          self.postMessage({ type: "loading_progress", phase: "downloading", percent, label: `${loadedMb}${totalMb}` });
+          self.postMessage({ type: "loading_progress", phase: "downloading", percent, label: `${loadedMb}${totalMb}`, loaded, total });
         }).catch((e) => {
           Logger.warn(LogCategory.SYSTEM, `WGB: streaming download failed (${e}) — falling back to in-RAM`);
           return null;
@@ -1780,7 +1780,7 @@ const loadBundleImpl = async (payload: { data?: Uint8Array; url?: string; blob?:
         const doneMb = (done / 1024 / 1024).toFixed(0);
         const totalMb = (total / 1024 / 1024).toFixed(0);
         const percent = total > 0 ? Math.round(done / total * 100) : 0;
-        self.postMessage({ type: "loading_progress", phase: "caching", percent, label: `${doneMb} / ${totalMb} MB` });
+        self.postMessage({ type: "loading_progress", phase: "caching", percent, label: `${doneMb} / ${totalMb} MB`, loaded: done, total });
       };
 
       if (headKind === "wgb") {
@@ -2399,7 +2399,7 @@ const initV86 = async (canvas: OffscreenCanvas) => {
           const doneMb = (done / 1024 / 1024).toFixed(0);
           const totalMb = (total / 1024 / 1024).toFixed(0);
           const percent = total > 0 ? Math.round(done / total * 100) : 0;
-          self.postMessage({ type: "loading_progress", phase: "caching", percent, label: `${doneMb} / ${totalMb} MB` });
+          self.postMessage({ type: "loading_progress", phase: "caching", percent, label: `${doneMb} / ${totalMb} MB`, loaded: done, total });
         });
       } else {
         bundle = await WgbLoader.fromBuffer(pendingBundle.data as Uint8Array);
