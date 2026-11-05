@@ -368,14 +368,35 @@ let sessionNetworkReady: Promise<void> = Promise.resolve();
 let networkRevision = 0;
 let networkConnecting = false;
 const postNetworkState = (status: NetworkStatus): void => self.postMessage({ type: "network_state", status });
+/** How long a game start waits for an OPTIONAL relay (NetworkConfig.optional) before it starts without one. */
+const OPTIONAL_NETWORK_WAIT_MS = 10_000;
 const awaitSessionNetwork = async (): Promise<void> => {
   if (EmulatorConfig.getInstance().network && !lanNetwork.connected && !networkConnecting) {
     applySessionNetwork(EmulatorConfig.getInstance().network);
   }
   for (;;) {
     const revision = networkRevision;
-    try { await sessionNetworkReady; }
-    catch (error) { if (revision === networkRevision) throw error; }
+    const optional = EmulatorConfig.getInstance().network?.optional === true;
+    try {
+      if (!optional) await sessionNetworkReady;
+      else {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`no answer in ${OPTIONAL_NETWORK_WAIT_MS / 1000} s`)), OPTIONAL_NETWORK_WAIT_MS);
+        });
+        try { await Promise.race([sessionNetworkReady, timeout]); } finally { clearTimeout(timer); }
+      }
+    } catch (error) {
+      if (revision !== networkRevision) continue;
+      if (!optional) throw error;
+      // The relay is optional: start as with no network at all (the game's LAN menu finds nobody) rather than not
+      // at all. The whole session stays offline, parent and child processes alike; the next start tries again.
+      const reason = String(error instanceof Error ? error.message : error);
+      console.warn(`BottleShip: LAN relay unreachable (${reason}); starting without it`);
+      applySessionNetwork(null);
+      postNetworkState({ state: "error", reason });
+      continue;
+    }
     if (revision === networkRevision) return;
   }
 };

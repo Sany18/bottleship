@@ -7,6 +7,9 @@ export interface NetworkConfig {
   directPlay8?: DirectPlay8NetworkPolicy;
   directPlay4?: DirectPlay4NetworkPolicy;
   winsock?: WinsockNetworkPolicy;
+  /** The game starts without the virtual LAN when the relay cannot be reached (offline, server down): an embedding
+   *  host whose players mostly play alone sets it so that multiplayer never stops the game from starting. */
+  optional?: boolean;
 }
 
 export interface NetworkStatus {
@@ -20,7 +23,7 @@ export const NETWORK_SETTINGS_KEY = "bottleship_network_v1";
 export function normalizeNetworkConfig(value: unknown): NetworkConfig | null {
   if (value == null) return null;
   if (typeof value !== "object") throw new Error("Network settings must contain a server URL and room.");
-  const { serverUrl, room, directPlay8, directPlay4, winsock } = value as Partial<NetworkConfig>;
+  const { serverUrl, room, directPlay8, directPlay4, winsock, optional } = value as Partial<NetworkConfig>;
   if (winsock !== undefined && (!winsock || winsock.provider !== "native" ||
       typeof winsock.hostListener !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(winsock.hostListener)))
     throw new Error("Native Winsock requires a configured TCP Host listener ID.");
@@ -50,7 +53,8 @@ export function normalizeNetworkConfig(value: unknown): NetworkConfig | null {
   }
   return { serverUrl: url.origin, room: name, ...(directPlay8 ? {directPlay8: {provider: "native" as const, hostListener: directPlay8.hostListener}} : {}),
     ...(winsock ? {winsock: {provider: "native" as const, hostListener: winsock.hostListener}} : {}),
-    ...(directPlay4 ? {directPlay4: {provider: "native" as const, tcpHostListener: directPlay4.tcpHostListener, udpHostListener: directPlay4.udpHostListener}} : {}) };
+    ...(directPlay4 ? {directPlay4: {provider: "native" as const, tcpHostListener: directPlay4.tcpHostListener, udpHostListener: directPlay4.udpHostListener}} : {}),
+    ...(optional === true ? {optional: true} : {}) };
 }
 
 export function networkConfigFromLocation(search: string, saved: NetworkConfig | null): NetworkConfig | null {
@@ -75,6 +79,7 @@ export function networkConfigFromLocation(search: string, saved: NetworkConfig |
     serverUrl: params.get("lanServer") ?? saved?.serverUrl,
     room: params.get("room") ?? saved?.room,
     directPlay8,
+    optional: params.has("lanServer") ? params.get("lanOptional") === "1" : saved?.optional,
   });
 }
 
@@ -83,9 +88,11 @@ export function networkInviteUrl(href: string, config: NetworkConfig | null): st
   if (config) {
     url.searchParams.set("lanServer", config.serverUrl);
     url.searchParams.set("room", config.room);
+    if (config.optional) url.searchParams.set("lanOptional", "1"); else url.searchParams.delete("lanOptional");
   } else {
     url.searchParams.delete("lanServer");
     url.searchParams.delete("room");
+    url.searchParams.delete("lanOptional");
   }
   if (config?.directPlay4) {
     url.searchParams.set("dp4Provider", "native");
